@@ -1,0 +1,17 @@
+0.5  1.0 0.52        0.3   1
+4    4          40    2.0
+4    4          40
+5           100     1
+.false.            0
+.false.            0
+.true.             4
+5
+
+# RT, J, h, mu, Q
+# Nlx, Nly, Ltrot, Beta
+# NlxTherm, NlyTherm, LtrotTherm
+# Nwrap, Nbin, Nsweep
+# is_tau, Nthermal
+# is_warm, Nwarm
+# is_global, Nglobal
+# absolute

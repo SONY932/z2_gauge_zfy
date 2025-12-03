@@ -21,7 +21,9 @@ module OperatorKin_mod
 contains
     subroutine opK_set(this)
         class(OperatorKin), intent(inout) :: this
-        this%alpha = 0.5d0 * Dtau * RT
+        ! Use the same alpha for both propagation and Sherman-Morrison update
+        ! No symmetric checkerboard decomposition - use single sweep with full alpha
+        this%alpha = Dtau * RT
         this%alpha_2 = Dtau * RT
         return
     end subroutine opK_set
@@ -58,7 +60,7 @@ contains
 
     subroutine opK_mmult_R(this, Mat, Latt, sigma, ntau, nflag)
 ! In Mat Out U(NF) * EXP(D(NF)) * Mat
-! Symmetrized checkerboard decomposition: forward (1->2->3->4) then backward (4->3->2->1)
+! Standard checkerboard decomposition (no symmetrization for compatibility with Sherman-Morrison)
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
@@ -68,17 +70,11 @@ contains
 ! Local:
         integer :: ig
 
-        ! Forward sweep: group 1 -> 2 -> 3 -> 4
+        ! Single sweep: group 1 -> 2 -> 3 -> 4
         call process_group(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
         call process_group(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
         call process_group(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
         call process_group(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-
-        ! Backward sweep: group 4 -> 3 -> 2 -> 1 (for symmetrization)
-        call process_group(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
 
         return
     end subroutine opK_mmult_R
@@ -119,7 +115,7 @@ contains
 
     subroutine opK_mmult_L(this, Mat, Latt, sigma, ntau, nflag)
 ! In Mat Out Mat * EXP(D(NF)) * UT(NF)
-! Symmetrized checkerboard decomposition: forward (1->2->3->4) then backward (4->3->2->1)
+! Standard checkerboard decomposition (no symmetrization for compatibility with Sherman-Morrison)
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
@@ -127,17 +123,11 @@ contains
         real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: ntau, nflag
 
-        ! Forward sweep: group 1 -> 2 -> 3 -> 4
+        ! Single sweep: group 1 -> 2 -> 3 -> 4
         call process_group_L(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
         call process_group_L(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
         call process_group_L(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
         call process_group_L(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-
-        ! Backward sweep: group 4 -> 3 -> 2 -> 1 (for symmetrization)
-        call process_group_L(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
 
         return
     end subroutine opK_mmult_L

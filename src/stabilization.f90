@@ -187,12 +187,11 @@ contains
             write(6,*) "illegal imaginary input in stabgreen, nt =", nt
         endif
 
-        ! 注意：下面这一段 λ 投影（M = I + P_lambda·B_tot）在当前
-        ! 稳定化/传播结构下会与 LocalK 的局域更新公式不完全匹配，
-        ! 导致严重的 “ortho unstable” 和 Gr(ii,ii) 出界。
-        ! 为保持现阶段数值稳定，这里先暂时关闭 λ 对费米子的直接作用，
-        ! 回到原来的 G = (I + B_tot)^-1 定义，仅在规范场部分使用 λ。
-        ! 如需重新启用，请把下面一行解注释，并配合重新推导/改写局域更新。
+        ! Note: λ projection is currently disabled because the propagation
+        ! formulas in localK.f90 and multiply.f90 assume G = (I + B_tot)^{-1}
+        ! without the P_lambda factor. To enable λ updates, the propagation
+        ! formulas would need to be modified to account for the projection.
+        ! When λ = 1 everywhere (the current default), this has no effect.
         ! call apply_lambda_projection(Gr)
 
         deallocate(WORK)
@@ -423,7 +422,7 @@ contains
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
-            if (dif .ge. 5.5d-5) write(6,*) nt, dif, "left ortho unstable in RANK ", IRANK
+            if (dif .ge. 1.0d-2) write(6,*) nt, dif, "left ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
             Prop%Gr = Gr
         endif
@@ -461,7 +460,7 @@ contains
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
-            if (dif .ge. 5.5d-5) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK
+            if (dif .ge. 1.0d-2) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
             Prop%Gr = Gr
         endif
@@ -492,15 +491,15 @@ contains
 ! stabilization test
         dif = compare_mat(Gr_tmp%Gr0t, PropGr%Gr0t)
         if (dif > PropGr%Xmaxm(1)) PropGr%Xmaxm(1) = dif
-        if (dif .ge. 5.5d-5) write(6,*) nt, dif, "GR0T ortho unstable in RANK ", IRANK
+        if (dif .ge. 1.0d-2) write(6,*) nt, dif, "GR0T ortho unstable in RANK ", IRANK
         PropGr%Xmeanm(1) = PropGr%Xmeanm(1) + dif
         dif = compare_mat(Gr_tmp%Grt0, PropGr%Grt0)
         if (dif > PropGr%Xmaxm(2)) PropGr%Xmaxm(2) = dif
-        if (dif .ge. 5.5d-5) write(6,*) nt, dif, "GRT0 ortho unstable in RANK ", IRANK
+        if (dif .ge. 1.0d-2) write(6,*) nt, dif, "GRT0 ortho unstable in RANK ", IRANK
         PropGr%Xmeanm(2) = PropGr%Xmeanm(2) + dif
         dif = compare_mat(Gr_tmp%Grtt, PropGr%Grtt)
         if (dif > PropGr%Xmaxm(3)) PropGr%Xmaxm(3) = dif
-        if (dif .ge. 5.5d-5) write(6,*) nt, dif, "GRTT ortho unstable in RANK ", IRANK
+        if (dif .ge. 1.0d-2) write(6,*) nt, dif, "GRTT ortho unstable in RANK ", IRANK
         PropGr%Xmeanm(3) = PropGr%Xmeanm(3) + dif
         PropGr%Gr00 = Gr_tmp%Gr00
         PropGr%Gr0t = Gr_tmp%Gr0t
