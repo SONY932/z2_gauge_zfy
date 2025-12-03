@@ -1,6 +1,7 @@
 module LocalSweep_mod
     use Dynamics_mod
     use LocalK_mod
+    use GlobalK_mod
     use ObserEqual_mod
     use calc_basic
     use DQMC_Model_mod
@@ -156,9 +157,11 @@ contains
         logical, intent(inout) :: is_beta
         logical, intent(in) :: toggle
         integer :: Nobs, Nobst, nsw
+        integer :: n_lambda_accept, n_lambda_total
 
         call this%reset(toggle)
         Nobs = 0; Nobst = 0
+        n_lambda_accept = 0; n_lambda_total = 0
         do nsw = 1, Nsweep
             if(is_beta) then
                 call this%sweep_L(PropU, PropD, WrU, WrD, iseed, Nobs)
@@ -167,6 +170,20 @@ contains
                 call this%sweep_R(PropU, PropD, WrU, WrD, iseed, toggle, Nobs, Nobst)
                 call this%sweep_L(PropU, PropD, WrU, WrD, iseed, Nobs)
             endif
+            ! 全局 λ 更新：在每次 sweep 结束时进行
+            ! 使用当前的 Green 函数（在 τ=0 或 τ=β 处）
+            call Global_lambda_update(PropU%Gr, PropD%Gr, iseed, n_lambda_accept, n_lambda_total)
+        enddo
+        ! 更新 λ 接受率统计（通过 count 方法）
+        ! 注意：由于使用参数传递，这里需要手动调用 count
+        ! Acc_lambda 的统计已在 Global_lambda_update 返回的计数器中
+        ! 这里我们使用一个简化的方法：每次接受调用 count(.true.)，每次拒绝调用 count(.false.)
+        ! 但由于 count 期望每次调用一次，我们需要循环
+        do nsw = 1, n_lambda_accept
+            call Acc_lambda%count(.true.)
+        enddo
+        do nsw = 1, n_lambda_total - n_lambda_accept
+            call Acc_lambda%count(.false.)
         enddo
         call Obs_equal%ave(Nobs)
         if (toggle) call Obs_tau%ave(Nobst)
