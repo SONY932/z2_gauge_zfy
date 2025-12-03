@@ -1,7 +1,7 @@
 FC=mpif90
 
 # 默认编译选项（优化模式）
-FLAGS_OPT = -c -O3 -fallow-argument-mismatch -ffree-line-length-none -Wno-line-truncation
+FLAGS_OPT = -c -O2 -fallow-argument-mismatch -ffree-line-length-none -Wno-line-truncation
 # 调试编译选项（debug模式）
 FLAGS_DEBUG = -c -O0 -g -fbacktrace -fcheck=all -Wall -fallow-argument-mismatch -ffree-line-length-none -Wno-line-truncation
 

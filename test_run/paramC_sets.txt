@@ -6,12 +6,3 @@
 .false.            0
 .true.             4
 5
-
-# RT, J, h, mu, Q
-# Nlx, Nly, Ltrot, Beta
-# NlxTherm, NlyTherm, LtrotTherm
-# Nwrap, Nbin, Nsweep
-# is_tau, Nthermal
-# is_warm, Nwarm
-# is_global, Nglobal
-# absolute
