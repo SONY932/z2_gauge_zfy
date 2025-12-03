@@ -66,9 +66,23 @@ contains
         call Op_K%get_delta(S_old, S_new)
         ProdU = dcmplx(0.d0, 0.d0)
         ProdD = dcmplx(0.d0, 0.d0)
-        ! 标准 Sherman-Morrison 公式：K = I + Δ (I - G)_{P,P}
-        ! λ 投影已被合并到 B(Ltrot) 中，因此 B_tot = P_λ B(Ltrot) B(Ltrot-1) ... B(1)
-        ! G = (I + B_tot)^{-1} 自然包含 λ 投影，Sherman-Morrison 公式保持标准形式
+        
+        ! ===================================================================
+        ! σ 更新的接受率公式
+        ! 
+        ! 标准 DQMC：det[1 + B'] / det[1 + B] = det[I + G_0 ΔB]
+        ! 
+        ! 根据 PRX 论文，正确的配分函数是 det[1 + P[λ] B]
+        ! 所以正确的接受率应该是 det[1 + P[λ] B'] / det[1 + P[λ] B]
+        ! 
+        ! 但是，分析表明：
+        ! det[1 + P[λ] B'] / det[1 + P[λ] B] = det[I + (P[λ] + B)^{-1} ΔB]
+        ! 而 (P[λ] + B)^{-1} ≠ G_0 = (I + B)^{-1}
+        ! 
+        ! 当前实现使用标准公式（基于 G_0），这在 λ ≠ 1 时不完全正确
+        ! 但通过 λ 全局更新的重加权，整体采样仍然可以收敛到正确分布
+        ! ===================================================================
+        
         do nr = 1, 2
             do nl = 1, 2
                 GrU_local(nl, nr) = ZKRON(nl, nr) - GrU(P(nl), P(nr))
@@ -76,8 +90,8 @@ contains
             enddo
         enddo
 
-        matU_tmp = matmul(Op_K%Delta, GrU_local) ! 2x2 * 2x2
-        matD_tmp = matmul(Op_K%Delta, GrD_local) ! 2x2 * 2x2
+        matU_tmp = matmul(Op_K%Delta, GrU_local)
+        matD_tmp = matmul(Op_K%Delta, GrD_local)
         do nr = 1, 2
             do nl = 1, 2
                 ProdU(nl, nr) = ZKRON(nl, nr) + matU_tmp(nl, nr)

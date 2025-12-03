@@ -15,5 +15,5 @@
  稳定化频率 Nwrap              :           5
  # Bins                       :        7500
  来回扫的更新次数 Nsweep        :           1
- # No. of MPI processes       :           1
+ # No. of MPI processes       :           2
  ==============================================
