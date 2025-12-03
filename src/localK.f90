@@ -144,10 +144,10 @@ contains
         return
     end subroutine LocalK_metro
 
-    subroutine Local_lambda_flip(GrU, GrD, iseed, ii, jj)
+    subroutine Local_lambda_flip(PropU, PropD, iseed, ii, jj)
         use MyMats
 ! Arguments:
-        complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: GrU, GrD
+        class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: ii, jj
 ! Local:
@@ -159,8 +159,8 @@ contains
 
 ! 采用 rank-2 Woodbury，一次性对 (ii,jj) 成对翻转 λ，避免在主 Gr 上反复 preview/revert。
 ! 先在当前 Green 上计算两个自旋的成对行列式比，再根据接受与否，对主 Gr 做一次 rank-2 更新。
-        call lambda_pair_ratio(GrU, ii, jj, rU_pair, safeU)
-        call lambda_pair_ratio(GrD, ii, jj, rD_pair, safeD)
+        call lambda_pair_ratio(PropU%Gr, ii, jj, rU_pair, safeU)
+        call lambda_pair_ratio(PropD%Gr, ii, jj, rD_pair, safeD)
 
         if (safeU .and. safeD .and. rU_pair > 0.d0 .and. rD_pair > 0.d0) then
             prob = exp(min(0.d0, log(rU_pair) + log(rD_pair)))
@@ -172,12 +172,18 @@ contains
         random = ranf(iseed)
         if (prob > random) then
             call Acc_lambda%count(.true.)
-            call lambda_pair_update(GrU, ii, jj)
-            call lambda_pair_update(GrD, ii, jj)
+            call lambda_pair_update(PropU%Gr, ii, jj)
+            call lambda_pair_update(PropD%Gr, ii, jj)
+            
+            ! 更新 λ 场
             NsigL_K%lambda(ii) = -NsigL_K%lambda(ii)
             NsigL_K%lambda(jj) = -NsigL_K%lambda(jj)
             lambda_new(ii) = NsigL_K%lambda(ii)
             lambda_new(jj) = NsigL_K%lambda(jj)
+            
+            ! 注意：不在这里更新 UUR/UUL 链
+            ! P_λ 投影只在 stab_green 后通过 apply_lambda_projection 应用
+            ! 这样在 wrap 时，稳定化和传播的 Green 函数都使用相同的 λ 配置
         else
             call Acc_lambda%count(.false.)
             lambda_new(ii) = NsigL_K%lambda(ii)
@@ -319,12 +325,12 @@ contains
         do ii = 2*Lq, 1, -1
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! λ 场更新：暂时禁用，等待基本框架验证通过
-        ! 当 λ = 1 时不需要翻转
+        ! λ 场更新：暂时禁用
+        ! TODO: 需要重新设计 λ 投影和更新的实现方式
         ! if (nt == Ltrot) then
         !     do ii = 1, Lq - 1
         !         do jj = ii + 1, Lq
-        !             call Local_lambda_flip(PropU%Gr, PropD%Gr, iseed, ii, jj)
+        !             call Local_lambda_flip(PropU, PropD, iseed, ii, jj)
         !         enddo
         !     enddo
         ! endif
@@ -349,11 +355,11 @@ contains
         do ii = 1, 2*Lq
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! λ 场更新：暂时禁用，等待基本框架验证通过
+        ! λ 场更新：暂时禁用
         ! if (nt == Ltrot) then
         !     do ii = 1, Lq - 1
         !         do jj = ii + 1, Lq
-        !             call Local_lambda_flip(PropU%Gr, PropD%Gr, iseed, ii, jj)
+        !             call Local_lambda_flip(PropU, PropD, iseed, ii, jj)
         !         enddo
         !     enddo
         ! endif
