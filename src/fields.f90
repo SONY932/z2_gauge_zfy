@@ -563,15 +563,21 @@ contains
         real(kind=8) :: X
         integer :: ii
 
+        ! 暂时禁用 λ 随机化，保持 λ = 1，以测试基本框架
+        ! 当 λ = 1 时，P_λ = I，程序应该等价于不带 λ 投影的版本
         do ii = 1, size(lambda_vec)
-            X = ranf(seed)
-            if (X >= 0.5d0) then
-                lambda_vec(ii) = 1.d0
-            else
-                lambda_vec(ii) = -1.d0
-            endif
+            lambda_vec(ii) = 1.d0
         enddo
-        call lambda_enforce_sector(lambda_vec)
+        ! TODO: 当基本框架验证通过后，可以启用以下随机化代码
+        ! do ii = 1, size(lambda_vec)
+        !     X = ranf(seed)
+        !     if (X >= 0.5d0) then
+        !         lambda_vec(ii) = 1.d0
+        !     else
+        !         lambda_vec(ii) = -1.d0
+        !     endif
+        ! enddo
+        ! call lambda_enforce_sector(lambda_vec)
         return
     end subroutine lambda_random_fill
 

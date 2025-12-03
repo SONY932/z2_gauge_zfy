@@ -187,10 +187,11 @@ contains
             write(6,*) "illegal imaginary input in stabgreen, nt =", nt
         endif
 
-        ! λ projection: G = (I + B)^{-1} → G_λ = (I + P_λ B)^{-1}
-        ! 其中 P_λ = diag(λ_r)，λ_r = ±1
-        ! 现在 LocalK_metro 的 Sherman-Morrison 公式已经考虑了 P_λ 的影响
-        call apply_lambda_projection(Gr)
+        ! λ 投影已经被合并到最后一个时间片的传播子 B(Ltrot) 中
+        ! 在 non_interact.f90 的 opMU_mmult_R/L 中，当 nt == Ltrot 时会乘以 P_λ
+        ! 因此 B_tot = P_λ B(Ltrot) B(Ltrot-1) ... B(1)
+        ! 稳定化计算出的 G = (I + B_tot)^{-1} 已经自动包含了 λ 投影
+        ! 不需要单独调用 apply_lambda_projection
 
         deallocate(WORK)
         return
