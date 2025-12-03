@@ -1,0 +1,16 @@
+TARGET = SpinFluctuation.out
+OBJS = calc_basic.o lattice.o fields.o\
+       non_interact.o operator_Yukawa.o model.o process_matrix.o\
+       multiply.o obser_equal.o obser_tau.o stabilization.o\
+       localK.o globalK.o\
+       dynamics.o local_sweep.o global_update.o\
+       fourier_trans.o main.o
+  
+.SUFFIXES: .f90 
+.f90.o:
+	$(FC)  $(SUFFIX) $(FLAGS) $<
+$(TARGET): $(OBJS)
+	$(FC) $(LF) -o $(TARGET) $(OBJS) $(LIBS)
+clean:
+	rm  $(OBJS)
+
