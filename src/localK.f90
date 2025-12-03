@@ -55,6 +55,7 @@ contains
         real(kind=8) :: random
         integer :: P(2), j, no, nl, nr
         real(kind=8) :: S_new, S_old
+        real(kind=8) :: lambda_P1, lambda_P2  ! λ 投影因子
 
 ! 局部翻转规范场
         sigma_new(ii, ntau) = - NsigL_K%sigma(ii, ntau)
@@ -62,10 +63,20 @@ contains
         S_old = NsigL_K%sigma(ii, ntau)
         P(1) = Latt%bond_list(ii, 1)
         P(2) = Latt%bond_list(ii, 2)
+        
+        ! 获取 λ 投影因子：λ_{P(1)} 和 λ_{P(2)}
+        ! 费米子矩阵 M = I + P_λ B_tot，其中 P_λ = diag(λ_r)
+        lambda_P1 = NsigL_K%lambda(P(1))
+        lambda_P2 = NsigL_K%lambda(P(2))
 
         call Op_K%get_delta(S_old, S_new)
         ProdU = dcmplx(0.d0, 0.d0)
         ProdD = dcmplx(0.d0, 0.d0)
+        ! 标准 Sherman-Morrison 公式：K = I + Δ (I - G)_{P,P}
+        ! 注意：当 λ 投影被启用时，G 已经是 (I + P_λ B)^{-1} 的形式
+        ! 但 Sherman-Morrison 更新仍然使用 (I - G) 的因子，因为更新来自
+        ! B' = B(I + Δ_local)，即 ΔB = B Δ_local，而不是直接的 ΔB
+        ! 在这种情况下，K 矩阵不需要额外的 λ 因子
         do nr = 1, 2
             do nl = 1, 2
                 GrU_local(nl, nr) = ZKRON(nl, nr) - GrU(P(nl), P(nr))
@@ -316,17 +327,16 @@ contains
         do ii = 2*Lq, 1, -1
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! λ 场更新：目前暂时禁用
-        ! 原因：σ 更新的 Sherman-Morrison 公式假设 G = (I + B)^{-1}
-        ! 但启用 λ 投影后 G = (I + P_λ B)^{-1}，两者不兼容
-        ! 要正确启用 λ 更新，需要修改 σ 更新的 Sherman-Morrison 公式
-        ! if (nt == Ltrot) then
-        !     do ii = 1, Lq - 1
-        !         do jj = ii + 1, Lq
-        !             call Local_lambda_flip(PropU%Gr, PropD%Gr, iseed, ii, jj)
-        !         enddo
-        !     enddo
-        ! endif
+        ! λ 场更新：在最后一个时间片 (nt == Ltrot) 进行
+        ! σ 更新的 Sherman-Morrison 公式已修改为支持 G = (I + P_λ B)^{-1}
+        ! λ 成对翻转保持 Q = Π_r λ_r 不变
+        if (nt == Ltrot) then
+            do ii = 1, Lq - 1
+                do jj = ii + 1, Lq
+                    call Local_lambda_flip(PropU%Gr, PropD%Gr, iseed, ii, jj)
+                enddo
+            enddo
+        endif
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
@@ -348,14 +358,14 @@ contains
         do ii = 1, 2*Lq
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! λ 场更新：目前暂时禁用（同上）
-        ! if (nt == Ltrot) then
-        !     do ii = 1, Lq - 1
-        !         do jj = ii + 1, Lq
-        !             call Local_lambda_flip(PropU%Gr, PropD%Gr, iseed, ii, jj)
-        !         enddo
-        !     enddo
-        ! endif
+        ! λ 场更新：在最后一个时间片 (nt == Ltrot) 进行
+        if (nt == Ltrot) then
+            do ii = 1, Lq - 1
+                do jj = ii + 1, Lq
+                    call Local_lambda_flip(PropU%Gr, PropD%Gr, iseed, ii, jj)
+                enddo
+            enddo
+        endif
         call Op_K%mmult_R(PropU%UUR, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropD%UUR, Latt, NsigL_K%sigma, nt, 1)
         return

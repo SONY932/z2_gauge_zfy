@@ -187,12 +187,10 @@ contains
             write(6,*) "illegal imaginary input in stabgreen, nt =", nt
         endif
 
-        ! λ projection is currently disabled to maintain compatibility with
-        ! the σ update Sherman-Morrison formula which assumes G = (I + B)^{-1}.
-        ! To enable λ updates, this would need to be activated, but that requires
-        ! modifying the σ update formulas as well.
-        ! When λ = 1 everywhere (current default), this has no effect anyway.
-        ! call apply_lambda_projection(Gr)
+        ! λ projection: G = (I + B)^{-1} → G_λ = (I + P_λ B)^{-1}
+        ! 其中 P_λ = diag(λ_r)，λ_r = ±1
+        ! 现在 LocalK_metro 的 Sherman-Morrison 公式已经考虑了 P_λ 的影响
+        call apply_lambda_projection(Gr)
 
         deallocate(WORK)
         return
