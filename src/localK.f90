@@ -183,6 +183,15 @@ contains
         return
     contains
         subroutine lambda_pair_ratio(Gr, i, j, r_pair, is_safe)
+            ! 计算成对翻转 λ_i 和 λ_j 的接受率
+            ! 根据论文公式，G = (I + P_λ B)^{-1}
+            ! 当翻转 λ_i, λ_j 时，ΔP(i,i) = -2λ_i, ΔP(j,j) = -2λ_j
+            ! K = I + (ΔP B) G (在 {i,j} 子空间)
+            ! 由于 BG = P(I-G)，有：
+            ! K(1,1) = 1 - 2(1 - G_ii) = 2G_ii - 1
+            ! K(1,2) = 2G_ij
+            ! K(2,1) = 2G_ji
+            ! K(2,2) = 2G_jj - 1
             complex(kind=8), intent(in) :: Gr(:, :)
             integer, intent(in) :: i, j
             real(kind=8), intent(out) :: r_pair
@@ -210,7 +219,7 @@ contains
                 endif
             endif
 
-            ! 若对角元严重偏离物理区间，保守地拒绝这对 λ 翻转，避免在病态 G 上放大数值误差
+            ! 若对角元严重偏离物理区间，保守地拒绝这对 λ 翻转
             if (Gii_diag < -tol .or. Gii_diag > 1.d0 + tol .or. &
                 Gjj_diag < -tol .or. Gjj_diag > 1.d0 + tol) then
                 r_pair = 0.d0
@@ -218,15 +227,12 @@ contains
                 return
             endif
 
-            ! 对于 s_i = s_j = -1，成对翻转的 2x2 Woodbury 矩阵：
-            ! K_ii = 1 + (s_i-1)(1-G_ii) = 2*G_ii - 1
-            ! K_jj = 2*G_jj - 1
-            ! K_ij = (s_i-1)(1-G_ji) = -2*(1-G_ji) = 2*(G_ji-1)
-            ! K_ji = 2*(G_ij-1)
+            ! 正确的 K 矩阵（根据论文推导）：
+            ! K = [[2G_ii - 1, 2G_ij], [2G_ji, 2G_jj - 1]]
             k11 = twoC*Gr(i, i) - oneC
             k22 = twoC*Gr(j, j) - oneC
-            k12 = twoC*(Gr(j, i) - oneC)
-            k21 = twoC*(Gr(i, j) - oneC)
+            k12 = twoC*Gr(i, j)   ! 修正：之前是 2*(G_ji - 1)，应为 2*G_ij
+            k21 = twoC*Gr(j, i)   ! 修正：之前是 2*(G_ij - 1)，应为 2*G_ji
 
             detK = k11 * k22 - k12 * k21
             r_pair = abs(detK)
@@ -234,22 +240,28 @@ contains
         end subroutine lambda_pair_ratio
 
         subroutine lambda_pair_update(Gr, i, j)
+            ! 更新 Green 函数：G' = (I + P' B)^{-1}
+            ! 使用 Sherman-Morrison-Woodbury 公式：
+            ! G' = G - G U K^{-1} V G
+            ! 其中 UV = ΔP B，U = [e_i, e_j]
+            ! V G 的行是 -2(I-G)[{i,j}, :]
+            ! 所以 G' = G + 2 G[:, {i,j}] K^{-1} (I-G)[{i,j}, :]
             complex(kind=8), intent(inout) :: Gr(:, :)
             integer, intent(in) :: i, j
             complex(kind=8) :: k11, k22, k12, k21, detK
             complex(kind=8) :: kinv11, kinv12, kinv21, kinv22
             complex(kind=8), dimension(Ndim) :: z1, z2, w1, w2
             complex(kind=8) :: oneC, twoC, w1_orig, w2_orig
-            integer :: k, l
+            integer :: kk, ll
 
             oneC = dcmplx(1.d0, 0.d0)
             twoC = dcmplx(2.d0, 0.d0)
 
-            ! 重新构造 K（与 lambda_pair_ratio 中一致）
+            ! K 矩阵（与 lambda_pair_ratio 一致）
             k11 = twoC*Gr(i, i) - oneC
             k22 = twoC*Gr(j, j) - oneC
-            k12 = twoC*(Gr(j, i) - oneC)
-            k21 = twoC*(Gr(i, j) - oneC)
+            k12 = twoC*Gr(i, j)
+            k21 = twoC*Gr(j, i)
 
             detK = k11 * k22 - k12 * k21
             if (abs(detK) < 1.d-300) return
@@ -259,34 +271,38 @@ contains
             kinv12 = -k12 / detK
             kinv21 = -k21 / detK
 
-            ! Z 的两列：Z(:,1) = (1-G)(:,i), Z(:,2) = (1-G)(:,j)
-            do k = 1, Ndim
-                z1(k) = oneC - Gr(k, i)
-                z2(k) = oneC - Gr(k, j)
+            ! Z 的两列：Z(:,1) = G(:,i), Z(:,2) = G(:,j)
+            do kk = 1, Ndim
+                z1(kk) = Gr(kk, i)
+                z2(kk) = Gr(kk, j)
             enddo
 
-            ! W 的两行：W(1,:) = (s_i-1)*G(i,:), W(2,:) = (s_j-1)*G(j,:)，此处 s_i = s_j = -1
-            do l = 1, Ndim
-                w1(l) = -twoC * Gr(i, l)
-                w2(l) = -twoC * Gr(j, l)
+            ! W 的两行：W(1,:) = (I-G)(i,:), W(2,:) = (I-G)(j,:)
+            do ll = 1, Ndim
+                if (ll == i) then
+                    w1(ll) = oneC - Gr(i, ll)
+                else
+                    w1(ll) = -Gr(i, ll)
+                endif
+                if (ll == j) then
+                    w2(ll) = oneC - Gr(j, ll)
+                else
+                    w2(ll) = -Gr(j, ll)
+                endif
             enddo
 
-            ! 先算 Y = K^{-1} W，Y 为 2×Ndim，对应两行 y1, y2。
-            ! 注意：这里必须保留 w1,w2 的原始值来计算两行，否则会把已更新的结果再次混入。
-            do l = 1, Ndim
-                ! 保存原始行向量在该列的值
-                w1_orig = w1(l)
-                w2_orig = w2(l)
-                ! y1 = kinv11 * w1_orig + kinv12 * w2_orig
-                ! y2 = kinv21 * w1_orig + kinv22 * w2_orig
-                w1(l) = kinv11 * w1_orig + kinv12 * w2_orig
-                w2(l) = kinv21 * w1_orig + kinv22 * w2_orig
+            ! 计算 Y = K^{-1} W（2×N 矩阵，存为两个行向量 y1, y2）
+            do ll = 1, Ndim
+                w1_orig = w1(ll)
+                w2_orig = w2(ll)
+                w1(ll) = kinv11 * w1_orig + kinv12 * w2_orig
+                w2(ll) = kinv21 * w1_orig + kinv22 * w2_orig
             enddo
 
-            ! 最终更新：G' = G - Z * Y，其中 Y 的两行现在存放在 w1,w2 中
-            do k = 1, Ndim
-                do l = 1, Ndim
-                    Gr(k, l) = Gr(k, l) - ( z1(k) * w1(l) + z2(k) * w2(l) )
+            ! 更新：G' = G + 2 * (z1 ⊗ y1 + z2 ⊗ y2)
+            do kk = 1, Ndim
+                do ll = 1, Ndim
+                    Gr(kk, ll) = Gr(kk, ll) + twoC * (z1(kk) * w1(ll) + z2(kk) * w2(ll))
                 enddo
             enddo
         end subroutine lambda_pair_update
@@ -300,10 +316,10 @@ contains
         do ii = 2*Lq, 1, -1
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! 说明：在当前版本中，为了先验证 σ-only 框架和观测量的稳定性，
-        ! 这里暂时关闭末片 τ=β 上的 λ 成对翻转，仅演化规范场 σ。
-        ! 若将来重新启用 λ 对费米子的更新，需要在与稳定化结构完全匹配的
-        ! 新 M(λ) 公式下重新开放下面这几行。
+        ! λ 场更新：目前暂时禁用
+        ! 原因：σ 更新的 Sherman-Morrison 公式假设 G = (I + B)^{-1}
+        ! 但启用 λ 投影后 G = (I + P_λ B)^{-1}，两者不兼容
+        ! 要正确启用 λ 更新，需要修改 σ 更新的 Sherman-Morrison 公式
         ! if (nt == Ltrot) then
         !     do ii = 1, Lq - 1
         !         do jj = ii + 1, Lq
@@ -332,7 +348,7 @@ contains
         do ii = 1, 2*Lq
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! 同上：右向 sweep 也暂时不在末片执行 λ 成对翻转。
+        ! λ 场更新：目前暂时禁用（同上）
         ! if (nt == Ltrot) then
         !     do ii = 1, Lq - 1
         !         do jj = ii + 1, Lq

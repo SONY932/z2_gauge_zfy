@@ -187,11 +187,11 @@ contains
             write(6,*) "illegal imaginary input in stabgreen, nt =", nt
         endif
 
-        ! Note: λ projection is currently disabled because the propagation
-        ! formulas in localK.f90 and multiply.f90 assume G = (I + B_tot)^{-1}
-        ! without the P_lambda factor. To enable λ updates, the propagation
-        ! formulas would need to be modified to account for the projection.
-        ! When λ = 1 everywhere (the current default), this has no effect.
+        ! λ projection is currently disabled to maintain compatibility with
+        ! the σ update Sherman-Morrison formula which assumes G = (I + B)^{-1}.
+        ! To enable λ updates, this would need to be activated, but that requires
+        ! modifying the σ update formulas as well.
+        ! When λ = 1 everywhere (current default), this has no effect anyway.
         ! call apply_lambda_projection(Gr)
 
         deallocate(WORK)
