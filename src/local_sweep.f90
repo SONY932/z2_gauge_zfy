@@ -170,9 +170,11 @@ contains
                 call this%sweep_R(PropU, PropD, WrU, WrD, iseed, toggle, Nobs, Nobst)
                 call this%sweep_L(PropU, PropD, WrU, WrD, iseed, Nobs)
             endif
-            ! 全局 λ 更新：在每次 sweep 结束时进行
-            ! 使用当前的 Green 函数（在 τ=0 或 τ=β 处）
-            call Global_lambda_update(PropU%Gr, PropD%Gr, iseed, n_lambda_accept, n_lambda_total)
+            ! 全局 λ 更新：暂时禁用
+            ! 原因：当前的接受率公式使用 G_0，但正确的公式需要 G_λ
+            ! 这会导致 λ 配置偏离正确分布
+            ! TODO: 实现正确的 λ 更新需要在 wrap 时计算 det[1 + P[λ] B]
+            ! call Global_lambda_update(PropU%Gr, PropD%Gr, iseed, n_lambda_accept, n_lambda_total)
         enddo
         ! 更新 λ 接受率统计（通过 count 方法）
         ! 注意：由于使用参数传递，这里需要手动调用 count

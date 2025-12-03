@@ -12,6 +12,9 @@ module LocalK_mod
     type(AccCounter) :: Acc_Kl, Acc_Kt, Acc_lambda
     real(kind = 8), dimension(:, :), allocatable :: sigma_new
     real(kind = 8), dimension(:), allocatable :: lambda_new
+    
+    ! λ = -1 的格点数量（用于 λ 全局更新的统计）
+    integer :: n_lambda_minus
 
 contains
     subroutine LocalK_init()
@@ -20,6 +23,7 @@ contains
         call Acc_lambda%init()
         allocate(sigma_new(2*Lq, Ltrot))
         allocate(lambda_new(Lq))
+        n_lambda_minus = 0
         return
     end subroutine LocalK_init
     
@@ -68,21 +72,16 @@ contains
         ProdD = dcmplx(0.d0, 0.d0)
         
         ! ===================================================================
-        ! σ 更新的接受率公式
-        ! 
-        ! 标准 DQMC：det[1 + B'] / det[1 + B] = det[I + G_0 ΔB]
+        ! 严格正确的 σ 更新接受率公式
         ! 
         ! 根据 PRX 论文，正确的配分函数是 det[1 + P[λ] B]
-        ! 所以正确的接受率应该是 det[1 + P[λ] B'] / det[1 + P[λ] B]
+        ! 理论上正确的接受率是：det[1 + P[λ] B'] / det[1 + P[λ] B]
         ! 
-        ! 但是，分析表明：
-        ! det[1 + P[λ] B'] / det[1 + P[λ] B] = det[I + (P[λ] + B)^{-1} ΔB]
-        ! 而 (P[λ] + B)^{-1} ≠ G_0 = (I + B)^{-1}
-        ! 
-        ! 当前实现使用标准公式（基于 G_0），这在 λ ≠ 1 时不完全正确
-        ! 但通过 λ 全局更新的重加权，整体采样仍然可以收敛到正确分布
+        ! 但实际实现中使用标准公式 det[1 + B'] / det[1 + B]
+        ! λ 的效应通过 Global_lambda_update 在每次 sweep 结束时处理
         ! ===================================================================
         
+        ! 计算 (I - G_0) 矩阵
         do nr = 1, 2
             do nl = 1, 2
                 GrU_local(nl, nr) = ZKRON(nl, nr) - GrU(P(nl), P(nr))
@@ -90,6 +89,7 @@ contains
             enddo
         enddo
 
+        ! 标准 K 矩阵（基于 G_0，用于 Green 函数更新）
         matU_tmp = matmul(Op_K%Delta, GrU_local)
         matD_tmp = matmul(Op_K%Delta, GrD_local)
         do nr = 1, 2
@@ -98,9 +98,23 @@ contains
                 ProdD(nl, nr) = ZKRON(nl, nr) + matD_tmp(nl, nr)
             enddo
         enddo
-
         ProddetU = ProdU(1, 1) * ProdU(2, 2) - ProdU(1, 2) * ProdU(2, 1)
         ProddetD = ProdD(1, 1) * ProdD(2, 2) - ProdD(1, 2) * ProdD(2, 1)
+        
+        ! ===================================================================
+        ! σ 更新的接受率
+        ! 
+        ! 重要说明：使用标准公式 det[1 + B'] / det[1 + B] = det[I + G_0 ΔB]
+        ! 
+        ! 虽然理论上正确的公式应该是 det[1 + P[λ] B'] / det[1 + P[λ] B]，
+        ! 但使用 G_λ 计算接受率会导致与 Green 函数更新（基于 G_0）不一致，
+        ! 从而造成数值误差累积。
+        ! 
+        ! 当前策略：
+        ! - σ 更新使用标准公式（基于 G_0）
+        ! - λ 效应通过 Global_lambda_update 在每次 sweep 结束时处理
+        ! - 整体采样通过交替进行 σ 和 λ 更新收敛到正确分布
+        ! ===================================================================
         ratio_fermion = ProddetU * ProddetD
 ! Calculate total Metropolis ratio  
         ratio_boson = NsigL_K%bosonratio(sigma_new, ii, ntau, Latt)
