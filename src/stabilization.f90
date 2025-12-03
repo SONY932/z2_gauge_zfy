@@ -388,6 +388,8 @@ contains
         WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR(1:Ndim, 1:Ndim)
         WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
         if (nt == Ltrot) then
+            ! 计算 G_0 = (1 + B_tot)^{-1}（不含 P[λ]）
+            ! P[λ] 的效应在 λ 翻转接受率计算中单独处理
             Gr = dcmplx(0.d0, 0.d0)
             call stab_green(Gr, Prop, nt)
             Prop%Gr = Gr
@@ -420,6 +422,7 @@ contains
         endif
         if (nt .ne. Ltrot) then
             call stab_UL(Prop)
+            ! 计算 G_0 = (1 + B_tot)^{-1}（不含 P[λ]）
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
@@ -458,6 +461,7 @@ contains
         endif
         if (nt .ne. 0) then
             call stab_UR(Prop)
+            ! 计算 G_0 = (1 + B_tot)^{-1}（不含 P[λ]）
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif

@@ -181,9 +181,8 @@ contains
             lambda_new(ii) = NsigL_K%lambda(ii)
             lambda_new(jj) = NsigL_K%lambda(jj)
             
-            ! 注意：不在这里更新 UUR/UUL 链
-            ! P_λ 投影只在 stab_green 后通过 apply_lambda_projection 应用
-            ! 这样在 wrap 时，稳定化和传播的 Green 函数都使用相同的 λ 配置
+            ! 注意：不需要更新 UUR 链
+            ! P[λ] 在 Wrap 时动态应用，不存储在 UUR 中
         else
             call Acc_lambda%count(.false.)
             lambda_new(ii) = NsigL_K%lambda(ii)
@@ -326,7 +325,8 @@ contains
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
         ! λ 场更新：暂时禁用
-        ! TODO: 需要重新设计 λ 投影和更新的实现方式
+        ! 标准传播公式不能正确处理 P[λ] 的位置变化
+        ! TODO: 需要推导带 P[λ] 的传播公式
         ! if (nt == Ltrot) then
         !     do ii = 1, Lq - 1
         !         do jj = ii + 1, Lq
