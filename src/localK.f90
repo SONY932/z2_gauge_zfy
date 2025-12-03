@@ -324,9 +324,10 @@ contains
         do ii = 2*Lq, 1, -1
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! λ 场更新：暂时禁用
-        ! 标准传播公式不能正确处理 P[λ] 的位置变化
-        ! TODO: 需要推导带 P[λ] 的传播公式
+        ! λ 场更新：禁用局部更新
+        ! 原因：局部更新的 Green 函数更新公式假设 G = (1 + P[λ]B)^{-1}
+        ! 但程序存储的是 G_0 = (1 + B)^{-1}，两者不兼容
+        ! λ 更新通过 Global_lambda_update 在每次 sweep 结束时全局进行
         ! if (nt == Ltrot) then
         !     do ii = 1, Lq - 1
         !         do jj = ii + 1, Lq
@@ -355,7 +356,7 @@ contains
         do ii = 1, 2*Lq
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! λ 场更新：暂时禁用
+        ! λ 场更新：禁用局部更新（同上）
         ! if (nt == Ltrot) then
         !     do ii = 1, Lq - 1
         !         do jj = ii + 1, Lq
