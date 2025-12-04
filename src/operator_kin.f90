@@ -61,23 +61,36 @@ contains
     end subroutine opK_get_delta
 
     subroutine opK_mmult_R(this, Mat, Latt, sigma, ntau, nflag)
-! In Mat Out B * Mat，使用棋盘分解
-! B = B_4 * B_3 * B_2 * B_1
-! B * Mat = B_4 * B_3 * B_2 * B_1 * Mat
-! 所以先乘 B_1，然后 B_2，然后 B_3，最后 B_4
+! In Mat Out B * Mat
+! 按顺序处理所有键（与 CodeXun 类似，不使用棋盘分解）
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
         class(SquareLattice), intent(in) :: Latt
         real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: ntau, nflag
+! Local:
+        integer :: ii, P(2), jj
+        real(kind = 8) :: vec
+        complex(kind=8), dimension(2, Ndim) :: Vhlp
 
-        ! 按棋盘分解顺序处理：group_1 -> group_2 -> group_3 -> group_4
-        ! 这样 B * Mat = B_4 * B_3 * B_2 * B_1 * Mat
-        call process_group(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
+        ! 按顺序处理所有键
+        do ii = 1, 2*Lq
+            vec = sigma(ii, ntau)
+            call this%get_exp(vec, nflag)
+            P(1) = Latt%bond_list(ii, 1)
+            P(2) = Latt%bond_list(ii, 2)
+            
+            ! Apply 2x2 Givens rotation to rows P(1) and P(2)
+            do jj = 1, Ndim
+                Vhlp(1, jj) = this%entryC * Mat(P(1), jj) + this%entryS * Mat(P(2), jj)
+                Vhlp(2, jj) = this%entryS * Mat(P(1), jj) + this%entryC * Mat(P(2), jj)
+            enddo
+            do jj = 1, Ndim
+                Mat(P(1), jj) = Vhlp(1, jj)
+                Mat(P(2), jj) = Vhlp(2, jj)
+            enddo
+        enddo
 
         return
     end subroutine opK_mmult_R
@@ -130,23 +143,36 @@ contains
     end subroutine process_group
 
     subroutine opK_mmult_L(this, Mat, Latt, sigma, ntau, nflag)
-! In Mat Out Mat * B，使用棋盘分解
-! B = B_4 * B_3 * B_2 * B_1（按组从后往前乘）
-! Mat * B = Mat * B_4 * B_3 * B_2 * B_1
-! 所以先乘 B_4，然后 B_3，然后 B_2，最后 B_1
+! In Mat Out Mat * B
+! 按相反顺序处理所有键（与 CodeXun 类似）
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
         class(SquareLattice), intent(in) :: Latt
         real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: ntau, nflag
+! Local:
+        integer :: ii, P(2), jj
+        real(kind = 8) :: vec
+        complex(kind=8), dimension(Ndim, 2) :: Uhlp
 
-        ! 按棋盘分解顺序处理：group_4 -> group_3 -> group_2 -> group_1
-        ! 这样 Mat * B = Mat * B_4 * B_3 * B_2 * B_1
-        call process_group_L(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
+        ! 按相反顺序处理所有键
+        do ii = 2*Lq, 1, -1
+            vec = sigma(ii, ntau)
+            call this%get_exp(vec, nflag)
+            P(1) = Latt%bond_list(ii, 1)
+            P(2) = Latt%bond_list(ii, 2)
+            
+            ! Apply 2x2 Givens rotation to columns P(1) and P(2)
+            do jj = 1, Ndim
+                Uhlp(jj, 1) = Mat(jj, P(1)) * this%entryC + Mat(jj, P(2)) * this%entryS
+                Uhlp(jj, 2) = Mat(jj, P(1)) * this%entryS + Mat(jj, P(2)) * this%entryC
+            enddo
+            do jj = 1, Ndim
+                Mat(jj, P(1)) = Uhlp(jj, 1)
+                Mat(jj, P(2)) = Uhlp(jj, 2)
+            enddo
+        enddo
 
         return
     end subroutine opK_mmult_L
