@@ -12,30 +12,39 @@ module GlobalK_mod
     public
     private :: ratioK_fermion_simple, ratioK_fermion_woodbury
     private :: compute_LR_cols_rows_global
-    private :: apply_group_to_cols_global, apply_group_to_rows_global
+    private :: apply_group_to_cols_global, apply_group_to_rows_global, apply_group_inv_to_rows_global
 
 contains
     subroutine ratioK_fermion_woodbury(GrU, GrD, sigma_base, sigma_new, ii, ntau, group_idx, ratio_fermion)
+        ! =========================================================================
         ! 使用 Woodbury 公式计算费米子行列式比并更新 Green 函数
         ! 
         ! 与 LocalK_metro_woodbury 使用相同的逻辑
+        ! 
+        ! 重要说明：传入的 G 是 G_0 = (1 + B)^{-1}
+        ! 当所有 λ = 1 时，公式完全正确
+        ! =========================================================================
         complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: GrU, GrD
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma_base, sigma_new
         integer, intent(in) :: ii, ntau, group_idx
         real(kind=8), intent(out) :: ratio_fermion
         
         ! Local
-        complex(kind=8) :: detK_U, detK_D
-        complex(kind=8), dimension(2, 2) :: M_U, M_D, K_U, K_D, Kinv_U, Kinv_D
-        complex(kind=8) :: L_cols(Ndim, 2), R_rows(2, Ndim)
-        complex(kind=8) :: GL_U(Ndim, 2), GL_D(Ndim, 2)
-        complex(kind=8) :: RG_U(2, Ndim), RG_D(2, Ndim)
-        complex(kind=8) :: GL_Delta_U(Ndim, 2), GL_Delta_D(Ndim, 2)
+        complex(kind=8) :: detR_U, detR_D
+        complex(kind=8), dimension(2, 2) :: R_small_U, R_small_D, Rinv_U, Rinv_D
+        complex(kind=8) :: L_cols(Ndim, 2)
+        complex(kind=8) :: Linv_rows(2, Ndim)
+        complex(kind=8) :: R_Binv_rows(2, Ndim)
+        complex(kind=8) :: VG_U(2, Ndim), VG_D(2, Ndim)
+        complex(kind=8) :: U(Ndim, 2)
+        complex(kind=8) :: GU_U(Ndim, 2), GU_D(Ndim, 2)
         complex(kind=8) :: temp(Ndim, 2), Diff(Ndim, Ndim)
         complex(kind=8) :: Delta_c(2, 2)
+        complex(kind=8) :: Bk_inv_2x2(2, 2)
         real(kind=8) :: Delta_local(2, 2)
         real(kind=8) :: S_old, S_new_val
-        integer :: P(2), j, no, nl, nr
+        real(kind=8) :: Cv_inv, Sv_inv
+        integer :: P(2), j, no, nl, nr, kk
 
         S_old = sigma_base(ii, ntau)
         S_new_val = sigma_new(ii, ntau)
@@ -48,110 +57,136 @@ contains
         P(2) = Latt%bond_list(ii, 2)
         
         ! 计算 Delta 矩阵
-        call Op_K%get_delta(S_old, S_new_val)
-        Delta_local = Op_K%Delta
+        ! 注意：Woodbury 公式需要 ΔE = E_new - E_old，不是 E_new E_old^{-1} - I
+        block
+            real(kind=8) :: C_new, S_new_tmp, C_old, S_old_tmp
+            C_new = cosh(Op_K%alpha * S_new_val)
+            S_new_tmp = sinh(Op_K%alpha * S_new_val)
+            C_old = cosh(Op_K%alpha * S_old)
+            S_old_tmp = sinh(Op_K%alpha * S_old)
+            Delta_local(1, 1) = C_new - C_old
+            Delta_local(1, 2) = S_new_tmp - S_old_tmp
+            Delta_local(2, 1) = S_new_tmp - S_old_tmp
+            Delta_local(2, 2) = C_new - C_old
+        end block
         Delta_c = dcmplx(Delta_local, 0.d0)
 
-        ! 计算 L_cols 和 R_rows
-        call compute_LR_cols_rows_global(group_idx, P, ntau, sigma_base, L_cols, R_rows)
+        ! ========== 步骤 1：计算 L_cols = L_ℓ(:, [i, j]) ==========
+        L_cols = dcmplx(0.d0, 0.d0)
+        L_cols(P(1), 1) = dcmplx(1.d0, 0.d0)
+        L_cols(P(2), 2) = dcmplx(1.d0, 0.d0)
+        do kk = group_idx + 1, 4
+            call apply_group_to_cols_global(kk, ntau, sigma_base, L_cols)
+        enddo
+
+        ! ========== 步骤 2：计算 R_Binv_rows = (R_ℓ × B(τ)^{-1})([i,j], :) ==========
+        Linv_rows = dcmplx(0.d0, 0.d0)
+        Linv_rows(1, P(1)) = dcmplx(1.d0, 0.d0)
+        Linv_rows(2, P(2)) = dcmplx(1.d0, 0.d0)
+        do kk = 4, group_idx + 1, -1
+            call apply_group_inv_to_rows_global(kk, ntau, sigma_base, Linv_rows)
+        enddo
+
+        ! 左乘 B_k^{-1}([i,j], [i,j])
+        Cv_inv = cosh(-Op_K%alpha * S_old)
+        Sv_inv = sinh(-Op_K%alpha * S_old)
+        Bk_inv_2x2(1, 1) = dcmplx(Cv_inv, 0.d0)
+        Bk_inv_2x2(1, 2) = dcmplx(Sv_inv, 0.d0)
+        Bk_inv_2x2(2, 1) = dcmplx(Sv_inv, 0.d0)
+        Bk_inv_2x2(2, 2) = dcmplx(Cv_inv, 0.d0)
+        
+        R_Binv_rows = dcmplx(0.d0, 0.d0)
+        do j = 1, Ndim
+            R_Binv_rows(1, j) = Bk_inv_2x2(1, 1) * Linv_rows(1, j) + Bk_inv_2x2(1, 2) * Linv_rows(2, j)
+            R_Binv_rows(2, j) = Bk_inv_2x2(2, 1) * Linv_rows(1, j) + Bk_inv_2x2(2, 2) * Linv_rows(2, j)
+        enddo
+
+        ! ========== 步骤 3：计算 U = L_cols × Δ ==========
+        U = matmul(L_cols, Delta_c)
 
         ! ========== Spin Up ==========
-        ! GL_U = G * L_cols
-        GL_U = dcmplx(0.d0, 0.d0)
-        do j = 1, 2
-            do no = 1, Ndim
-                do nl = 1, Ndim
-                    GL_U(no, j) = GL_U(no, j) + GrU(no, nl) * L_cols(nl, j)
-                enddo
-            enddo
-        enddo
-
-        ! RG_U = R_rows * G
-        RG_U = dcmplx(0.d0, 0.d0)
+        VG_U = R_Binv_rows
         do j = 1, Ndim
             do no = 1, 2
                 do nl = 1, Ndim
-                    RG_U(no, j) = RG_U(no, j) + R_rows(no, nl) * GrU(nl, j)
+                    VG_U(no, j) = VG_U(no, j) - R_Binv_rows(no, nl) * GrU(nl, j)
                 enddo
             enddo
         enddo
 
-        ! M_U = R_rows * G * L_cols
-        M_U = dcmplx(0.d0, 0.d0)
+        GU_U = dcmplx(0.d0, 0.d0)
+        do j = 1, 2
+            do no = 1, Ndim
+                do nl = 1, Ndim
+                    GU_U(no, j) = GU_U(no, j) + GrU(no, nl) * U(nl, j)
+                enddo
+            enddo
+        enddo
+
+        R_small_U = dcmplx(0.d0, 0.d0)
+        R_small_U(1, 1) = dcmplx(1.d0, 0.d0)
+        R_small_U(2, 2) = dcmplx(1.d0, 0.d0)
         do nr = 1, 2
             do nl = 1, 2
                 do no = 1, Ndim
-                    M_U(nl, nr) = M_U(nl, nr) + R_rows(nl, no) * GL_U(no, nr)
+                    R_small_U(nl, nr) = R_small_U(nl, nr) + VG_U(nl, no) * U(no, nr)
                 enddo
             enddo
         enddo
-
-        ! K_U = I + M * Delta
-        K_U = dcmplx(0.d0, 0.d0)
-        K_U(1, 1) = dcmplx(1.d0, 0.d0)
-        K_U(2, 2) = dcmplx(1.d0, 0.d0)
-        K_U = K_U + matmul(M_U, Delta_c)
-        detK_U = K_U(1, 1) * K_U(2, 2) - K_U(1, 2) * K_U(2, 1)
+        detR_U = R_small_U(1, 1) * R_small_U(2, 2) - R_small_U(1, 2) * R_small_U(2, 1)
 
         ! ========== Spin Down ==========
-        GL_D = dcmplx(0.d0, 0.d0)
-        do j = 1, 2
-            do no = 1, Ndim
-                do nl = 1, Ndim
-                    GL_D(no, j) = GL_D(no, j) + GrD(no, nl) * L_cols(nl, j)
-                enddo
-            enddo
-        enddo
-
-        RG_D = dcmplx(0.d0, 0.d0)
+        VG_D = R_Binv_rows
         do j = 1, Ndim
             do no = 1, 2
                 do nl = 1, Ndim
-                    RG_D(no, j) = RG_D(no, j) + R_rows(no, nl) * GrD(nl, j)
+                    VG_D(no, j) = VG_D(no, j) - R_Binv_rows(no, nl) * GrD(nl, j)
                 enddo
             enddo
         enddo
 
-        M_D = dcmplx(0.d0, 0.d0)
+        GU_D = dcmplx(0.d0, 0.d0)
+        do j = 1, 2
+            do no = 1, Ndim
+                do nl = 1, Ndim
+                    GU_D(no, j) = GU_D(no, j) + GrD(no, nl) * U(nl, j)
+                enddo
+            enddo
+        enddo
+
+        R_small_D = dcmplx(0.d0, 0.d0)
+        R_small_D(1, 1) = dcmplx(1.d0, 0.d0)
+        R_small_D(2, 2) = dcmplx(1.d0, 0.d0)
         do nr = 1, 2
             do nl = 1, 2
                 do no = 1, Ndim
-                    M_D(nl, nr) = M_D(nl, nr) + R_rows(nl, no) * GL_D(no, nr)
+                    R_small_D(nl, nr) = R_small_D(nl, nr) + VG_D(nl, no) * U(no, nr)
                 enddo
             enddo
         enddo
-
-        K_D = dcmplx(0.d0, 0.d0)
-        K_D(1, 1) = dcmplx(1.d0, 0.d0)
-        K_D(2, 2) = dcmplx(1.d0, 0.d0)
-        K_D = K_D + matmul(M_D, Delta_c)
-        detK_D = K_D(1, 1) * K_D(2, 2) - K_D(1, 2) * K_D(2, 1)
+        detR_D = R_small_D(1, 1) * R_small_D(2, 2) - R_small_D(1, 2) * R_small_D(2, 1)
         
-        ratio_fermion = max(abs(detK_U * detK_D), RATIO_EPS)
+        ratio_fermion = max(abs(detR_U * detR_D), RATIO_EPS)
 
         ! ========== 更新 Green 函数 ==========
-        ! Woodbury: G' = G - (G*L_cols*Delta) * K^{-1} * (R_rows*G)
-        
-        Kinv_U(1, 1) =  K_U(2, 2) / detK_U
-        Kinv_U(1, 2) = -K_U(1, 2) / detK_U
-        Kinv_U(2, 1) = -K_U(2, 1) / detK_U
-        Kinv_U(2, 2) =  K_U(1, 1) / detK_U
+        Rinv_U(1, 1) =  R_small_U(2, 2) / detR_U
+        Rinv_U(1, 2) = -R_small_U(1, 2) / detR_U
+        Rinv_U(2, 1) = -R_small_U(2, 1) / detR_U
+        Rinv_U(2, 2) =  R_small_U(1, 1) / detR_U
 
-        Kinv_D(1, 1) =  K_D(2, 2) / detK_D
-        Kinv_D(1, 2) = -K_D(1, 2) / detK_D
-        Kinv_D(2, 1) = -K_D(2, 1) / detK_D
-        Kinv_D(2, 2) =  K_D(1, 1) / detK_D
+        Rinv_D(1, 1) =  R_small_D(2, 2) / detR_D
+        Rinv_D(1, 2) = -R_small_D(1, 2) / detR_D
+        Rinv_D(2, 1) = -R_small_D(2, 1) / detR_D
+        Rinv_D(2, 2) =  R_small_D(1, 1) / detR_D
 
-        ! Spin Up
-        GL_Delta_U = matmul(GL_U, Delta_c)
-        temp = matmul(GL_Delta_U, Kinv_U)
-        Diff = matmul(temp, RG_U)
+        ! Spin Up: G' = G - GU × Rinv × VG
+        temp = matmul(GU_U, Rinv_U)
+        Diff = matmul(temp, VG_U)
         GrU = GrU - Diff
 
         ! Spin Down
-        GL_Delta_D = matmul(GL_D, Delta_c)
-        temp = matmul(GL_Delta_D, Kinv_D)
-        Diff = matmul(temp, RG_D)
+        temp = matmul(GU_D, Rinv_D)
+        Diff = matmul(temp, VG_D)
         GrD = GrD - Diff
 
         return
@@ -341,6 +376,83 @@ contains
             enddo
         end select
     end subroutine apply_group_to_rows_global
+    
+    subroutine apply_group_inv_to_rows_global(grp_idx, nt, sigma, rows)
+        ! 将 B_grp^{-1} 右乘到 rows 上：rows = rows * B_grp^{-1}
+        integer, intent(in) :: grp_idx, nt
+        real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma
+        complex(kind=8), intent(inout) :: rows(2, Ndim)
+        integer :: idx, bond_no, s1, s2, jj, glen
+        real(kind=8) :: sig, Cv, Sv
+        complex(kind=8) :: t1, t2
+        
+        select case (grp_idx)
+        case (1)
+            glen = size(Latt%group_1)
+            do idx = 1, glen
+                bond_no = Latt%group_1(idx)
+                s1 = Latt%bond_list(bond_no, 1)
+                s2 = Latt%bond_list(bond_no, 2)
+                sig = sigma(bond_no, nt)
+                Cv = cosh(-Op_K%alpha * sig)
+                Sv = sinh(-Op_K%alpha * sig)
+                do jj = 1, 2
+                    t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
+                    t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
+                    rows(jj, s1) = t1
+                    rows(jj, s2) = t2
+                enddo
+            enddo
+        case (2)
+            glen = size(Latt%group_2)
+            do idx = 1, glen
+                bond_no = Latt%group_2(idx)
+                s1 = Latt%bond_list(bond_no, 1)
+                s2 = Latt%bond_list(bond_no, 2)
+                sig = sigma(bond_no, nt)
+                Cv = cosh(-Op_K%alpha * sig)
+                Sv = sinh(-Op_K%alpha * sig)
+                do jj = 1, 2
+                    t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
+                    t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
+                    rows(jj, s1) = t1
+                    rows(jj, s2) = t2
+                enddo
+            enddo
+        case (3)
+            glen = size(Latt%group_3)
+            do idx = 1, glen
+                bond_no = Latt%group_3(idx)
+                s1 = Latt%bond_list(bond_no, 1)
+                s2 = Latt%bond_list(bond_no, 2)
+                sig = sigma(bond_no, nt)
+                Cv = cosh(-Op_K%alpha * sig)
+                Sv = sinh(-Op_K%alpha * sig)
+                do jj = 1, 2
+                    t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
+                    t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
+                    rows(jj, s1) = t1
+                    rows(jj, s2) = t2
+                enddo
+            enddo
+        case (4)
+            glen = size(Latt%group_4)
+            do idx = 1, glen
+                bond_no = Latt%group_4(idx)
+                s1 = Latt%bond_list(bond_no, 1)
+                s2 = Latt%bond_list(bond_no, 2)
+                sig = sigma(bond_no, nt)
+                Cv = cosh(-Op_K%alpha * sig)
+                Sv = sinh(-Op_K%alpha * sig)
+                do jj = 1, 2
+                    t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
+                    t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
+                    rows(jj, s1) = t1
+                    rows(jj, s2) = t2
+                enddo
+            enddo
+        end select
+    end subroutine apply_group_inv_to_rows_global
 
     subroutine ratioK_fermion_simple(GrU, GrD, sigma_new, ii, ntau, ratio_fermion)
         ! 使用简单的 Sherman-Morrison 公式计算费米子行列式比并更新 Green 函数
@@ -484,17 +596,48 @@ contains
     end function get_bond_group
 
     subroutine GlobalK_prop_L(PropU, PropD, log_ratio_fermion, sigma_new, nt)
+        ! 向左传播时计算费米子行列式比并更新 Green 函数
+        ! 使用正确的 Woodbury 公式（包含 P[λ]）
         class(Propagator), intent(inout) :: PropU, PropD
         real(kind=8), intent(inout) :: log_ratio_fermion
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma_new
         integer, intent(in) :: nt
-        integer :: ii
+        integer :: ii, grp, idx
         real(kind=8) :: ratio
 
-        ! 使用简单的 Sherman-Morrison 公式
-        do ii = 2*Lq, 1, -1
-            call ratioK_fermion_simple(PropU%Gr, PropD%Gr, sigma_new, ii, nt, ratio)
-            log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+        ! 按组顺序处理（从 group_4 到 group_1）
+        ! 对于每个组内的 bonds，使用 Woodbury 公式
+        do grp = 4, 1, -1
+            select case (grp)
+            case (4)
+                do idx = size(Latt%group_4), 1, -1
+                    ii = Latt%group_4(idx)
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                        sigma_new, ii, nt, grp, ratio)
+                    log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                enddo
+            case (3)
+                do idx = size(Latt%group_3), 1, -1
+                    ii = Latt%group_3(idx)
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                        sigma_new, ii, nt, grp, ratio)
+                    log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                enddo
+            case (2)
+                do idx = size(Latt%group_2), 1, -1
+                    ii = Latt%group_2(idx)
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                        sigma_new, ii, nt, grp, ratio)
+                    log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                enddo
+            case (1)
+                do idx = size(Latt%group_1), 1, -1
+                    ii = Latt%group_1(idx)
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                        sigma_new, ii, nt, grp, ratio)
+                    log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                enddo
+            end select
         enddo
         
         ! wrap G
@@ -508,11 +651,13 @@ contains
     end subroutine GlobalK_prop_L
 
     subroutine GlobalK_prop_R(PropU, PropD, log_ratio_fermion, sigma_new, nt)
+        ! 向右传播时计算费米子行列式比并更新 Green 函数
+        ! 使用正确的 Woodbury 公式（包含 P[λ]）
         class(Propagator), intent(inout) :: PropU, PropD
         real(kind=8), intent(inout) :: log_ratio_fermion
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma_new
         integer, intent(in) :: nt
-        integer :: ii
+        integer :: ii, grp, idx
         real(kind=8) :: ratio
 
         ! 先 wrap G（使用旧的 sigma）
@@ -521,10 +666,38 @@ contains
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
         
-        ! 使用简单的 Sherman-Morrison 公式
-        do ii = 1, 2*Lq
-            call ratioK_fermion_simple(PropU%Gr, PropD%Gr, sigma_new, ii, nt, ratio)
-            log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+        ! 按组顺序处理（从 group_1 到 group_4）
+        do grp = 1, 4
+            select case (grp)
+            case (1)
+                do idx = 1, size(Latt%group_1)
+                    ii = Latt%group_1(idx)
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                        sigma_new, ii, nt, grp, ratio)
+                    log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                enddo
+            case (2)
+                do idx = 1, size(Latt%group_2)
+                    ii = Latt%group_2(idx)
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                        sigma_new, ii, nt, grp, ratio)
+                    log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                enddo
+            case (3)
+                do idx = 1, size(Latt%group_3)
+                    ii = Latt%group_3(idx)
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                        sigma_new, ii, nt, grp, ratio)
+                    log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                enddo
+            case (4)
+                do idx = 1, size(Latt%group_4)
+                    ii = Latt%group_4(idx)
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                        sigma_new, ii, nt, grp, ratio)
+                    log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                enddo
+            end select
         enddo
         
         call Op_K%mmult_R(PropU%UUR, Latt, sigma_new, nt, 1)

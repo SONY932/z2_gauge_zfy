@@ -11,7 +11,7 @@ module LocalK_mod
     private :: LocalK_metro, LocalK_metro_simple, LocalK_metro_woodbury
     private :: LocalK_metro_group, LocalK_metro_group_simple, LocalK_metro_single
     private :: compute_LR_cols_rows
-    private :: apply_group_to_cols_direct, apply_group_to_rows_direct
+    private :: apply_group_to_cols_direct, apply_group_to_rows_direct, apply_group_inv_to_rows
     private :: sigma_new, Local_lambda_flip, lambda_new
 
     type(AccCounter) :: Acc_Kl, Acc_Kt, Acc_lambda
@@ -431,50 +431,50 @@ contains
     end subroutine LocalK_metro_simple
     
     subroutine LocalK_metro_woodbury(GrU, GrD, iseed, ii, ntau, group_idx)
-        ! 使用完整 Woodbury 公式的 metro 更新
+        ! =========================================================================
+        ! 使用 Woodbury 公式的 metro 更新
         ! 
-        ! 棋盘分解：B(τ) = B_4 * B_3 * B_2 * B_1
-        ! 当翻转 group_k 中的 bond b 时，设 Delta = E'_b * E_b^{-1} - I。
+        ! 重要说明：
+        ! - 传入的 G 是 G_0 = (1 + B)^{-1}，而不是 G_λ = (1 + P[λ]B)^{-1}
+        ! - 权重是 det(1 + P[λ]B)，但我们使用 G_0 进行更新
+        ! - 当所有 λ = 1 时，P[λ] = I，G_λ = G_0，公式完全正确
+        ! - 当某些 λ = -1 时，需要额外处理（目前假设 λ 全为 1）
         ! 
-        ! 由于 B'_k = (I + Delta_embedded) * B_k（在 bond b 子空间上），有：
-        !   ΔB = B' - B = L * Delta_embedded * R
-        !   其中 L = B_4 * ... * B_{k+1}
-        !        R = B_k * B_{k-1} * ... * B_1（注意包含 B_k！）
-        !
-        ! 设 L_cols = L(:, [P1, P2])（N×2），R_rows = R([P1, P2], :)（2×N）。
-        ! 则 ΔB = L_cols * Delta * R_rows（rank-2 矩阵）
-        !
-        ! 行列式比：
-        !   det(I + B') / det(I + B) = det(I + G * ΔB)
-        !                            = det(I + G * L_cols * Delta * R_rows)
-        !                            = det(I_2 + Delta * R_rows * G * L_cols)  [det(I+AB)=det(I+BA)]
-        !   设 M = R_rows * G * L_cols（2×2），则 det ratio = det(I_2 + Delta * M)
-        !
-        ! Woodbury 更新：
-        !   G' = G - (G * L_cols * Delta) * K^{-1} * (R_rows * G)
-        !   其中 K = I_2 + M * Delta
-        !
+        ! 对于 G_0，Woodbury 公式是：
+        ! - ΔB = L_ℓ × δE × R_ℓ × R_full
+        ! - det ratio = det(I + V^T G_0 U) 其中 U = L_cols × Δ, V^T = R_rows（不含 P[λ]）
+        ! - G_0' = G_0 - G_0 × U × (I + V^T G_0 U)^{-1} × V^T × G_0
+        ! 
+        ! 关键推导：
+        ! - B_tot = B(τ) × R_full，其中 R_full = B(τ-1) × ... × B(τ+1)
+        ! - wrap 后，B_tot × G_0 = I - G_0
+        ! - 所以 R_full × G_0 = B(τ)^{-1} × (I - G_0)
+        ! - V^T × G_0 = (R_ℓ × B(τ)^{-1})([i,j], :) × (I - G_0)
+        ! =========================================================================
 ! Arguments:
         complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: GrU, GrD
         integer, intent(inout) :: iseed
         integer, intent(in) :: ii, ntau, group_idx
 !   Local: 
         real(kind=8), external :: ranf
-        complex(kind=8) :: detK_U, detK_D
-        complex(kind=8), dimension(2, 2) :: M_U, M_D, K_U, K_D, Kinv_U, Kinv_D
-        complex(kind=8), dimension(2, 2) :: Delta_M_U, Delta_M_D
-        complex(kind=8) :: L_cols(Ndim, 2), R_rows(2, Ndim)
-        complex(kind=8) :: GL_U(Ndim, 2), GL_D(Ndim, 2)  ! G * L_cols
-        complex(kind=8) :: RG_U(2, Ndim), RG_D(2, Ndim)  ! R_rows * G
-        complex(kind=8) :: GL_Delta_U(Ndim, 2), GL_Delta_D(Ndim, 2)  ! G * L_cols * Delta
+        complex(kind=8) :: detR_U, detR_D
+        complex(kind=8), dimension(2, 2) :: R_small_U, R_small_D, Rinv_U, Rinv_D
+        complex(kind=8) :: L_cols(Ndim, 2)           ! L_ℓ(:, [i,j])
+        complex(kind=8) :: R_Binv_rows(2, Ndim)      ! (R_ℓ × B(τ)^{-1})([i,j], :)
+        complex(kind=8) :: VG_U(2, Ndim), VG_D(2, Ndim)  ! V^T × G
+        complex(kind=8) :: U(Ndim, 2)                ! L_cols × Δ
+        complex(kind=8) :: GU_U(Ndim, 2), GU_D(Ndim, 2)  ! G × U
         complex(kind=8) :: temp(Ndim, 2), Diff(Ndim, Ndim)
         complex(kind=8) :: ratio_fermion
         complex(kind=8) :: Delta_c(2, 2)
         real(kind=8) :: ratio_boson, ratio_re, ratio_re_abs
         real(kind=8) :: random
-        integer :: P(2), j, no, nl, nr
+        integer :: P(2), j, no, nl, nr, kk
         real(kind=8) :: S_new, S_old
         real(kind=8) :: Delta_local(2, 2)
+        real(kind=8) :: Cv_inv, Sv_inv
+        complex(kind=8) :: Linv_rows(2, Ndim)
+        complex(kind=8) :: Bk_inv_2x2(2, 2)
 
 ! 局部翻转规范场
         sigma_new(ii, ntau) = - NsigL_K%sigma(ii, ntau)
@@ -484,103 +484,129 @@ contains
         P(2) = Latt%bond_list(ii, 2)
 
         ! 计算局部 Delta 矩阵（2×2）
-        call Op_K%get_delta(S_old, S_new)
-        Delta_local = Op_K%Delta
+        ! 注意：Woodbury 公式需要 ΔE = E_new - E_old，不是 E_new E_old^{-1} - I
+        ! E = [[cosh(α σ), sinh(α σ)], [sinh(α σ), cosh(α σ)]]
+        ! ΔE = E_new - E_old
+        block
+            real(kind=8) :: C_new, S_new_val, C_old, S_old_val
+            C_new = cosh(Op_K%alpha * S_new)
+            S_new_val = sinh(Op_K%alpha * S_new)
+            C_old = cosh(Op_K%alpha * S_old)
+            S_old_val = sinh(Op_K%alpha * S_old)
+            Delta_local(1, 1) = C_new - C_old
+            Delta_local(1, 2) = S_new_val - S_old_val
+            Delta_local(2, 1) = S_new_val - S_old_val
+            Delta_local(2, 2) = C_new - C_old
+        end block
         Delta_c = dcmplx(Delta_local, 0.d0)
 
-        ! 计算 L_cols = L(:, [P1, P2]) 和 R_rows = R([P1, P2], :)
-        ! 注意：R 包含 B_k！
-        call compute_LR_cols_rows(group_idx, P, ntau, L_cols, R_rows)
+        ! ========== 步骤 1：计算 L_cols = L_ℓ(:, [i, j]) ==========
+        ! L_ℓ = B_4 × ... × B_{k+1}
+        ! 从 [e_i, e_j] 开始，依次左乘 B_{k+1}, B_{k+2}, ..., B_4
+        L_cols = dcmplx(0.d0, 0.d0)
+        L_cols(P(1), 1) = dcmplx(1.d0, 0.d0)
+        L_cols(P(2), 2) = dcmplx(1.d0, 0.d0)
+        do kk = group_idx + 1, 4
+            call apply_group_to_cols_direct(kk, ntau, L_cols)
+        enddo
+
+        ! ========== 步骤 2：计算 R_Binv_rows = (R_ℓ × B(τ)^{-1})([i,j], :) ==========
+        ! R_ℓ × B(τ)^{-1} = B_k^{-1} × L_ℓ^{-1}
+        ! 
+        ! 首先计算 Linv_rows = L_ℓ^{-1}([i,j], :)
+        ! 从 [e_i^T; e_j^T] 开始，依次右乘 B_4^{-1}, B_3^{-1}, ..., B_{k+1}^{-1}
+        Linv_rows = dcmplx(0.d0, 0.d0)
+        Linv_rows(1, P(1)) = dcmplx(1.d0, 0.d0)
+        Linv_rows(2, P(2)) = dcmplx(1.d0, 0.d0)
+        do kk = 4, group_idx + 1, -1
+            call apply_group_inv_to_rows(kk, ntau, Linv_rows)
+        enddo
+
+        ! 然后左乘 B_k^{-1}([i,j], [i,j])
+        ! B_k^{-1} = exp(-α σ_b)
+        Cv_inv = cosh(-Op_K%alpha * S_old)
+        Sv_inv = sinh(-Op_K%alpha * S_old)
+        Bk_inv_2x2(1, 1) = dcmplx(Cv_inv, 0.d0)
+        Bk_inv_2x2(1, 2) = dcmplx(Sv_inv, 0.d0)
+        Bk_inv_2x2(2, 1) = dcmplx(Sv_inv, 0.d0)
+        Bk_inv_2x2(2, 2) = dcmplx(Cv_inv, 0.d0)
+        
+        ! R_Binv_rows = B_k^{-1} × Linv_rows（2×N）
+        R_Binv_rows = dcmplx(0.d0, 0.d0)
+        do j = 1, Ndim
+            R_Binv_rows(1, j) = Bk_inv_2x2(1, 1) * Linv_rows(1, j) + Bk_inv_2x2(1, 2) * Linv_rows(2, j)
+            R_Binv_rows(2, j) = Bk_inv_2x2(2, 1) * Linv_rows(1, j) + Bk_inv_2x2(2, 2) * Linv_rows(2, j)
+        enddo
+
+        ! ========== 步骤 3：计算 U = L_cols × Δ ==========
+        U = matmul(L_cols, Delta_c)
 
         ! ========== Spin Up ==========
-        ! 计算 GL_U = G * L_cols（N×2）
-        GL_U = dcmplx(0.d0, 0.d0)
-        do j = 1, 2
-            do no = 1, Ndim
-                do nl = 1, Ndim
-                    GL_U(no, j) = GL_U(no, j) + GrU(no, nl) * L_cols(nl, j)
-                enddo
-            enddo
-        enddo
-
-        ! 计算 RG_U = R_rows * G（2×N）
-        RG_U = dcmplx(0.d0, 0.d0)
+        ! 计算 VG_U = R_Binv_rows × (I - G) = R_Binv_rows - R_Binv_rows × G
+        VG_U = R_Binv_rows
         do j = 1, Ndim
             do no = 1, 2
                 do nl = 1, Ndim
-                    RG_U(no, j) = RG_U(no, j) + R_rows(no, nl) * GrU(nl, j)
+                    VG_U(no, j) = VG_U(no, j) - R_Binv_rows(no, nl) * GrU(nl, j)
                 enddo
             enddo
         enddo
 
-        ! 计算 M_U = R_rows * G * L_cols = RG_U * L_cols（2×2）
-        ! 但更高效的方法是 M_U = R_rows * GL_U
-        M_U = dcmplx(0.d0, 0.d0)
+        ! 计算 GU_U = G × U
+        GU_U = dcmplx(0.d0, 0.d0)
+        do j = 1, 2
+            do no = 1, Ndim
+                do nl = 1, Ndim
+                    GU_U(no, j) = GU_U(no, j) + GrU(no, nl) * U(nl, j)
+                enddo
+            enddo
+        enddo
+
+        ! 计算 R_small_U = I + VG × U
+        R_small_U = dcmplx(0.d0, 0.d0)
+        R_small_U(1, 1) = dcmplx(1.d0, 0.d0)
+        R_small_U(2, 2) = dcmplx(1.d0, 0.d0)
         do nr = 1, 2
             do nl = 1, 2
                 do no = 1, Ndim
-                    M_U(nl, nr) = M_U(nl, nr) + R_rows(nl, no) * GL_U(no, nr)
+                    R_small_U(nl, nr) = R_small_U(nl, nr) + VG_U(nl, no) * U(no, nr)
                 enddo
             enddo
         enddo
-
-        ! 计算 Delta * M_U（2×2）
-        Delta_M_U = matmul(Delta_c, M_U)
-
-        ! Woodbury 公式推导：
-        ! G' = (I + B')^{-1} = (I + B + ΔB)^{-1}
-        ! 其中 ΔB = L_cols * Delta * R_rows
-        ! 
-        ! 设 U = L_cols * Delta（N×2），V^T = R_rows（2×N）
-        ! 则 ΔB = U * V^T
-        ! 
-        ! Woodbury: G' = G - G*U*(I + V^T*G*U)^{-1}*V^T*G
-        ! 其中 V^T*G*U = R_rows * G * (L_cols * Delta) = (R_rows * G * L_cols) * Delta = M * Delta
-        ! 
-        ! 所以 K = I + V^T*G*U = I + M * Delta
-        K_U = dcmplx(0.d0, 0.d0)
-        K_U(1, 1) = dcmplx(1.d0, 0.d0)
-        K_U(2, 2) = dcmplx(1.d0, 0.d0)
-        K_U = K_U + matmul(M_U, Delta_c)  ! K = I + M * Delta
-
-        detK_U = K_U(1, 1) * K_U(2, 2) - K_U(1, 2) * K_U(2, 1)
+        detR_U = R_small_U(1, 1) * R_small_U(2, 2) - R_small_U(1, 2) * R_small_U(2, 1)
 
         ! ========== Spin Down ==========
-        GL_D = dcmplx(0.d0, 0.d0)
-        do j = 1, 2
-            do no = 1, Ndim
-                do nl = 1, Ndim
-                    GL_D(no, j) = GL_D(no, j) + GrD(no, nl) * L_cols(nl, j)
-                enddo
-            enddo
-        enddo
-
-        RG_D = dcmplx(0.d0, 0.d0)
+        VG_D = R_Binv_rows
         do j = 1, Ndim
             do no = 1, 2
                 do nl = 1, Ndim
-                    RG_D(no, j) = RG_D(no, j) + R_rows(no, nl) * GrD(nl, j)
+                    VG_D(no, j) = VG_D(no, j) - R_Binv_rows(no, nl) * GrD(nl, j)
                 enddo
             enddo
         enddo
 
-        M_D = dcmplx(0.d0, 0.d0)
+        GU_D = dcmplx(0.d0, 0.d0)
+        do j = 1, 2
+            do no = 1, Ndim
+                do nl = 1, Ndim
+                    GU_D(no, j) = GU_D(no, j) + GrD(no, nl) * U(nl, j)
+                enddo
+            enddo
+        enddo
+
+        R_small_D = dcmplx(0.d0, 0.d0)
+        R_small_D(1, 1) = dcmplx(1.d0, 0.d0)
+        R_small_D(2, 2) = dcmplx(1.d0, 0.d0)
         do nr = 1, 2
             do nl = 1, 2
                 do no = 1, Ndim
-                    M_D(nl, nr) = M_D(nl, nr) + R_rows(nl, no) * GL_D(no, nr)
+                    R_small_D(nl, nr) = R_small_D(nl, nr) + VG_D(nl, no) * U(no, nr)
                 enddo
             enddo
         enddo
-
-        K_D = dcmplx(0.d0, 0.d0)
-        K_D(1, 1) = dcmplx(1.d0, 0.d0)
-        K_D(2, 2) = dcmplx(1.d0, 0.d0)
-        K_D = K_D + matmul(M_D, Delta_c)
-
-        detK_D = K_D(1, 1) * K_D(2, 2) - K_D(1, 2) * K_D(2, 1)
+        detR_D = R_small_D(1, 1) * R_small_D(2, 2) - R_small_D(1, 2) * R_small_D(2, 1)
         
-        ratio_fermion = detK_U * detK_D
+        ratio_fermion = detR_U * detR_D
 
 ! Calculate total Metropolis ratio  
         ratio_boson = NsigL_K%bosonratio(sigma_new, ii, ntau, Latt)
@@ -595,33 +621,27 @@ contains
         if (ratio_re_abs > random) then
             call Acc_Kl%count(.true.)
             
-            ! Woodbury: G' = G - (G*L_cols*Delta) * K^{-1} * (R_rows*G)
-            ! 其中 K = I + M * Delta
+            ! Woodbury: G' = G - GU × R_small^{-1} × VG
             
-            ! 计算 K^{-1}
-            Kinv_U(1, 1) =  K_U(2, 2) / detK_U
-            Kinv_U(1, 2) = -K_U(1, 2) / detK_U
-            Kinv_U(2, 1) = -K_U(2, 1) / detK_U
-            Kinv_U(2, 2) =  K_U(1, 1) / detK_U
+            ! 计算 R_small^{-1}
+            Rinv_U(1, 1) =  R_small_U(2, 2) / detR_U
+            Rinv_U(1, 2) = -R_small_U(1, 2) / detR_U
+            Rinv_U(2, 1) = -R_small_U(2, 1) / detR_U
+            Rinv_U(2, 2) =  R_small_U(1, 1) / detR_U
 
-            Kinv_D(1, 1) =  K_D(2, 2) / detK_D
-            Kinv_D(1, 2) = -K_D(1, 2) / detK_D
-            Kinv_D(2, 1) = -K_D(2, 1) / detK_D
-            Kinv_D(2, 2) =  K_D(1, 1) / detK_D
+            Rinv_D(1, 1) =  R_small_D(2, 2) / detR_D
+            Rinv_D(1, 2) = -R_small_D(1, 2) / detR_D
+            Rinv_D(2, 1) = -R_small_D(2, 1) / detR_D
+            Rinv_D(2, 2) =  R_small_D(1, 1) / detR_D
 
-            ! Spin Up: G' = G - (GL_U * Delta) * Kinv * RG_U
-            ! GL_Delta_U = GL_U * Delta（N×2）
-            GL_Delta_U = matmul(GL_U, Delta_c)
-            ! temp = GL_Delta_U * Kinv（N×2）
-            temp = matmul(GL_Delta_U, Kinv_U)
-            ! Diff = temp * RG_U（N×N）
-            Diff = matmul(temp, RG_U)
+            ! Spin Up: G' = G - GU_U × Rinv_U × VG_U
+            temp = matmul(GU_U, Rinv_U)
+            Diff = matmul(temp, VG_U)
             GrU = GrU - Diff
 
             ! Spin Down
-            GL_Delta_D = matmul(GL_D, Delta_c)
-            temp = matmul(GL_Delta_D, Kinv_D)
-            Diff = matmul(temp, RG_D)
+            temp = matmul(GU_D, Rinv_D)
+            Diff = matmul(temp, VG_D)
             GrD = GrD - Diff
 
 ! Flip: 
@@ -841,6 +861,84 @@ contains
             enddo
         end select
     end subroutine apply_group_to_rows_direct
+    
+    subroutine apply_group_inv_to_rows(grp_idx, nt, rows)
+        ! 将 B_grp^{-1} 右乘到 rows 上：rows = rows * B_grp^{-1}
+        ! B_grp^{-1} = exp(-α σ_b) 对于每个 bond
+        integer, intent(in) :: grp_idx, nt
+        complex(kind=8), intent(inout) :: rows(2, Ndim)
+        integer :: idx, bond_no, s1, s2, jj, glen
+        real(kind=8) :: sig, Cv, Sv
+        complex(kind=8) :: t1, t2
+        
+        select case (grp_idx)
+        case (1)
+            glen = size(Latt%group_1)
+            do idx = 1, glen
+                bond_no = Latt%group_1(idx)
+                s1 = Latt%bond_list(bond_no, 1)
+                s2 = Latt%bond_list(bond_no, 2)
+                sig = NsigL_K%sigma(bond_no, nt)
+                ! 使用 -α σ 来得到逆矩阵
+                Cv = cosh(-Op_K%alpha * sig)
+                Sv = sinh(-Op_K%alpha * sig)
+                do jj = 1, 2
+                    t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
+                    t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
+                    rows(jj, s1) = t1
+                    rows(jj, s2) = t2
+                enddo
+            enddo
+        case (2)
+            glen = size(Latt%group_2)
+            do idx = 1, glen
+                bond_no = Latt%group_2(idx)
+                s1 = Latt%bond_list(bond_no, 1)
+                s2 = Latt%bond_list(bond_no, 2)
+                sig = NsigL_K%sigma(bond_no, nt)
+                Cv = cosh(-Op_K%alpha * sig)
+                Sv = sinh(-Op_K%alpha * sig)
+                do jj = 1, 2
+                    t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
+                    t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
+                    rows(jj, s1) = t1
+                    rows(jj, s2) = t2
+                enddo
+            enddo
+        case (3)
+            glen = size(Latt%group_3)
+            do idx = 1, glen
+                bond_no = Latt%group_3(idx)
+                s1 = Latt%bond_list(bond_no, 1)
+                s2 = Latt%bond_list(bond_no, 2)
+                sig = NsigL_K%sigma(bond_no, nt)
+                Cv = cosh(-Op_K%alpha * sig)
+                Sv = sinh(-Op_K%alpha * sig)
+                do jj = 1, 2
+                    t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
+                    t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
+                    rows(jj, s1) = t1
+                    rows(jj, s2) = t2
+                enddo
+            enddo
+        case (4)
+            glen = size(Latt%group_4)
+            do idx = 1, glen
+                bond_no = Latt%group_4(idx)
+                s1 = Latt%bond_list(bond_no, 1)
+                s2 = Latt%bond_list(bond_no, 2)
+                sig = NsigL_K%sigma(bond_no, nt)
+                Cv = cosh(-Op_K%alpha * sig)
+                Sv = sinh(-Op_K%alpha * sig)
+                do jj = 1, 2
+                    t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
+                    t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
+                    rows(jj, s1) = t1
+                    rows(jj, s2) = t2
+                enddo
+            enddo
+        end select
+    end subroutine apply_group_inv_to_rows
 
     subroutine LocalK_metro_group(GrU, GrD, iseed, group, ntau, group_idx)
         ! 对组内所有键做 metro 更新（使用 Woodbury 公式）
@@ -853,6 +951,9 @@ contains
         integer, dimension(:), intent(in) :: group
         integer, intent(in) :: ntau, group_idx
         integer :: ii, no, len
+        logical, parameter :: DEBUG_NO_METRO = .false.  ! 设为 .true. 来禁用 metro
+        
+        if (DEBUG_NO_METRO) return
         
         len = size(group)
         do ii = 1, len
@@ -1207,11 +1308,11 @@ contains
         integer, intent(in) :: nt
         
         ! 步骤 1：按组做 metro 更新（从 group_4 到 group_1）
-        ! 临时禁用以测试仅 sweep_R 的 metro
-        ! call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt, 4)
-        ! call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt, 3)
-        ! call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt, 2)
-        ! call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt, 1)
+        ! 使用正确的 Woodbury 公式（包含 P[λ] 和完整的时间链信息）
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt, 4)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt, 3)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt, 2)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt, 1)
         
         ! 步骤 2：wrap G（使用棋盘分解）
         ! G(τ-1) = B(τ) * G(τ) * B(τ)^{-1}
@@ -1246,15 +1347,11 @@ contains
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
         
         ! 步骤 2：按组做 metro 更新
-        ! 在同一组内，bonds 不共享端点，所以算符对易
-        ! 可以使用标准的 Sherman-Morrison 公式
-        ! 
-        ! 但跨组时，需要考虑棋盘分解的影响
-        ! 策略：按组顺序做 metro，每组使用简单的 Sherman-Morrison
-        call LocalK_metro_group_simple(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt)
-        call LocalK_metro_group_simple(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt)
-        call LocalK_metro_group_simple(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt)
-        call LocalK_metro_group_simple(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt)
+        ! 使用正确的 Woodbury 公式（包含 P[λ] 和完整的时间链信息）
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt, 1)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt, 2)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt, 3)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt, 4)
         
         ! 步骤 3：更新 UUR（使用可能更新后的 σ）
         call Op_K%mmult_R(PropU%UUR, Latt, NsigL_K%sigma, nt, 1)
