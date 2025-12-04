@@ -219,9 +219,10 @@ contains
             if (abs(ratio_total) > random) then
                 n_accept = n_accept + 1
                 
-                ! 更新 Green 函数（rank-1 Sherman-Morrison）
-                call lambda_update_Green(GrU, ii)
-                call lambda_update_Green(GrD, ii)
+                ! 注意：不更新 Green 函数
+                ! Green 函数保持为 G = (I + B)^{-1}，不依赖于 λ
+                ! λ 的效应只体现在行列式比（接受率）中
+                ! 这样可以保证稳定化检查时 Green 函数的一致性
                 
                 ! 翻转 λ
                 NsigL_K%lambda(ii) = -NsigL_K%lambda(ii)

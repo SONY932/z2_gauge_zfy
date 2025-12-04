@@ -19,6 +19,6 @@
  Skipping Bosonic warm-up
  Accept_Klocal_shift                            :   1.7951388888888889E-003
  Accept_lambda_local                            :   6.1111111111111116E-002
- Max diff Matrix                                :   40.423679655786600     
- Mean diff Matrix                               :   1.9573110363828998     
- Tot CPU time                                   :   3.6849548539999999     
+ Max diff Matrix                                :   2.1671007072639554     
+ Mean diff Matrix                               :   1.9476796354046040     
+ Tot CPU time                                   :   3.7498451519999998     

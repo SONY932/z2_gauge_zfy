@@ -187,14 +187,6 @@ contains
             write(6,*) "illegal imaginary input in stabgreen, nt =", nt
         endif
 
-        ! 注意：apply_lambda_projection 暂时禁用
-        ! 因为它会改变 Green 函数的形式，但传播过程中没有相应考虑
-        ! 这会导致稳定化检查时的不一致
-        ! TODO: 需要重新设计 λ 投影的实现方式
-        ! if (nt == 0 .or. nt == Ltrot) then
-        !     call apply_lambda_projection(Gr)
-        ! endif
-
         deallocate(WORK)
         return
     end subroutine stab_green
@@ -392,8 +384,7 @@ contains
         WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR(1:Ndim, 1:Ndim)
         WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
         if (nt == Ltrot) then
-            ! 计算 G_0 = (1 + B_tot)^{-1}（不含 P[λ]）
-            ! P[λ] 的效应在 λ 翻转接受率计算中单独处理
+            ! 计算 G = (1 + B_tot)^{-1}
             Gr = dcmplx(0.d0, 0.d0)
             call stab_green(Gr, Prop, nt)
             Prop%Gr = Gr
@@ -426,7 +417,7 @@ contains
         endif
         if (nt .ne. Ltrot) then
             call stab_UL(Prop)
-            ! 计算 G_0 = (1 + B_tot)^{-1}（不含 P[λ]）
+            ! 计算 G = (1 + B_tot)^{-1}
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
@@ -465,7 +456,7 @@ contains
         endif
         if (nt .ne. 0) then
             call stab_UR(Prop)
-            ! 计算 G_0 = (1 + B_tot)^{-1}（不含 P[λ]）
+            ! 计算 G = (1 + B_tot)^{-1}
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
