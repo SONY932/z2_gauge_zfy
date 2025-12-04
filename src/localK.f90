@@ -8,7 +8,9 @@ module LocalK_mod
     implicit none
 
     public
-    private :: LocalK_metro, LocalK_metro_woodbury, compute_LR_cols_rows
+    private :: LocalK_metro, LocalK_metro_simple, LocalK_metro_woodbury
+    private :: LocalK_metro_group, LocalK_metro_group_simple, LocalK_metro_single
+    private :: compute_LR_cols_rows
     private :: apply_group_to_cols_direct, apply_group_to_rows_direct
     private :: sigma_new, Local_lambda_flip, lambda_new
 
@@ -162,6 +164,272 @@ contains
         return
     end subroutine LocalK_metro
 
+    subroutine LocalK_metro_group_simple(GrU, GrD, iseed, group, ntau)
+        ! 对一个组内的所有 bonds 使用简单的 Sherman-Morrison 更新
+        ! 同一组内的 bonds 不共享端点，所以算符对易
+        complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: GrU, GrD
+        integer, intent(inout) :: iseed
+        integer, dimension(:), intent(in) :: group
+        integer, intent(in) :: ntau
+        
+        integer :: idx, ii
+        
+        do idx = 1, size(group)
+            ii = group(idx)
+            call LocalK_metro_single(GrU, GrD, iseed, ii, ntau)
+        enddo
+        
+        return
+    end subroutine LocalK_metro_group_simple
+    
+    subroutine LocalK_metro_single(GrU, GrD, iseed, ii, ntau)
+        ! 对单个 bond 使用 Sherman-Morrison 更新
+        complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: GrU, GrD
+        integer, intent(inout) :: iseed
+        integer, intent(in) :: ii, ntau
+        
+        real(kind=8), external :: ranf
+        complex(kind=8) :: Proddet_U, Proddet_D
+        complex(kind=8), dimension(2, 2) :: Prod_U, Prod_D, Prodinv_U, Prodinv_D
+        complex(kind=8), dimension(2, 2) :: GrU_local, GrD_local, mat_tmp
+        complex(kind=8), dimension(2, Ndim) :: Vhlp_U, Vhlp_D
+        complex(kind=8), dimension(Ndim, 2) :: Uhlp_U, Uhlp_D, temp
+        complex(kind=8), dimension(Ndim, Ndim) :: Diff
+        real(kind=8) :: ratio_fermion, ratio_boson, ratio_total, random
+        real(kind=8) :: S_old, S_new_val
+        integer :: P(2), nl, nr, j
+        
+        S_old = NsigL_K%sigma(ii, ntau)
+        sigma_new(ii, ntau) = -S_old
+        S_new_val = sigma_new(ii, ntau)
+        
+        P(1) = Latt%bond_list(ii, 1)
+        P(2) = Latt%bond_list(ii, 2)
+        
+        call Op_K%get_delta(S_old, S_new_val)
+        
+        ! det ratio = det(I + Delta * (I - G))
+        ! 使用与 CodeXun 相同的形式
+        do nr = 1, 2
+            do nl = 1, 2
+                GrU_local(nl, nr) = ZKRON(nl, nr) - GrU(P(nl), P(nr))
+                GrD_local(nl, nr) = ZKRON(nl, nr) - GrD(P(nl), P(nr))
+            enddo
+        enddo
+        
+        ! Prod = I + Delta * (I - G)
+        mat_tmp = matmul(dcmplx(Op_K%Delta, 0.d0), GrU_local)
+        do nr = 1, 2
+            do nl = 1, 2
+                Prod_U(nl, nr) = ZKRON(nl, nr) + mat_tmp(nl, nr)
+            enddo
+        enddo
+        
+        mat_tmp = matmul(dcmplx(Op_K%Delta, 0.d0), GrD_local)
+        do nr = 1, 2
+            do nl = 1, 2
+                Prod_D(nl, nr) = ZKRON(nl, nr) + mat_tmp(nl, nr)
+            enddo
+        enddo
+        
+        Proddet_U = Prod_U(1,1) * Prod_U(2,2) - Prod_U(1,2) * Prod_U(2,1)
+        Proddet_D = Prod_D(1,1) * Prod_D(2,2) - Prod_D(1,2) * Prod_D(2,1)
+        ratio_fermion = abs(Proddet_U * Proddet_D)
+        
+        ratio_boson = NsigL_K%bosonratio(sigma_new, ii, ntau, Latt)
+        ratio_boson = ratio_boson * gauss_boson_ratio_sigma(ii, ntau, &
+            NsigL_K%sigma, sigma_new(ii, ntau), NsigL_K%lambda, Latt)
+        
+        ratio_total = ratio_fermion * ratio_boson
+        random = ranf(iseed)
+        
+        if (abs(ratio_total) > random) then
+            call Acc_Kl%count(.true.)
+            
+            ! Sherman-Morrison 更新
+            Prodinv_U(1,1) =  Prod_U(2,2) / Proddet_U
+            Prodinv_U(2,2) =  Prod_U(1,1) / Proddet_U
+            Prodinv_U(1,2) = -Prod_U(1,2) / Proddet_U
+            Prodinv_U(2,1) = -Prod_U(2,1) / Proddet_U
+            
+            Prodinv_D(1,1) =  Prod_D(2,2) / Proddet_D
+            Prodinv_D(2,2) =  Prod_D(1,1) / Proddet_D
+            Prodinv_D(1,2) = -Prod_D(1,2) / Proddet_D
+            Prodinv_D(2,1) = -Prod_D(2,1) / Proddet_D
+            
+            ! Sherman-Morrison 更新（与 CodeXun 相同）
+            ! G' = G - Uhlp * Prodinv * Vhlp
+            ! 其中 Uhlp = G(:, [P1,P2])
+            !      Vhlp = Delta * (I - G)([P1,P2], :)
+            !      Prodinv = (I + Delta * (I - G_local))^{-1}
+            
+            ! Spin Up
+            Uhlp_U = dcmplx(0.d0, 0.d0)
+            Vhlp_U = dcmplx(0.d0, 0.d0)
+            do nl = 1, 2
+                do j = 1, Ndim
+                    Uhlp_U(j, nl) = GrU(j, P(nl))
+                    Vhlp_U(nl, j) = -Op_K%Delta(nl, 1) * GrU(P(1), j) &
+                                   -Op_K%Delta(nl, 2) * GrU(P(2), j)
+                enddo
+                Vhlp_U(nl, P(1)) = Vhlp_U(nl, P(1)) + Op_K%Delta(nl, 1)
+                Vhlp_U(nl, P(2)) = Vhlp_U(nl, P(2)) + Op_K%Delta(nl, 2)
+            enddo
+            temp = matmul(Uhlp_U, Prodinv_U)
+            Diff = matmul(temp, Vhlp_U)
+            GrU = GrU - Diff
+            
+            ! Spin Down
+            Uhlp_D = dcmplx(0.d0, 0.d0)
+            Vhlp_D = dcmplx(0.d0, 0.d0)
+            do nl = 1, 2
+                do j = 1, Ndim
+                    Uhlp_D(j, nl) = GrD(j, P(nl))
+                    Vhlp_D(nl, j) = -Op_K%Delta(nl, 1) * GrD(P(1), j) &
+                                   -Op_K%Delta(nl, 2) * GrD(P(2), j)
+                enddo
+                Vhlp_D(nl, P(1)) = Vhlp_D(nl, P(1)) + Op_K%Delta(nl, 1)
+                Vhlp_D(nl, P(2)) = Vhlp_D(nl, P(2)) + Op_K%Delta(nl, 2)
+            enddo
+            temp = matmul(Uhlp_D, Prodinv_D)
+            Diff = matmul(temp, Vhlp_D)
+            GrD = GrD - Diff
+            
+            NsigL_K%sigma(ii, ntau) = sigma_new(ii, ntau)
+        else
+            call Acc_Kl%count(.false.)
+            sigma_new(ii, ntau) = NsigL_K%sigma(ii, ntau)
+        endif
+        
+        return
+    end subroutine LocalK_metro_single
+    
+    subroutine LocalK_metro_simple(GrU, GrD, iseed, ntau)
+        ! 简化的 metro 更新，使用类似 CodeXun 的 Sherman-Morrison 公式
+        ! 
+        ! 关键公式：det ratio = det(I + Delta * (I - G))
+        ! 这个公式对于 wrap 后的 G 仍然成立，因为 B_tot * G = I - G
+        !
+        complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: GrU, GrD
+        integer, intent(inout) :: iseed
+        integer, intent(in) :: ntau
+        
+        real(kind=8), external :: ranf
+        complex(kind=8) :: Proddet_U, Proddet_D
+        complex(kind=8), dimension(2, 2) :: Prod_U, Prod_D, Prodinv_U, Prodinv_D
+        complex(kind=8), dimension(2, 2) :: GrU_local, GrD_local, mat_tmp
+        complex(kind=8), dimension(2, Ndim) :: Vhlp_U, Vhlp_D
+        complex(kind=8), dimension(Ndim, 2) :: Uhlp_U, Uhlp_D, temp
+        complex(kind=8), dimension(Ndim, Ndim) :: Diff
+        real(kind=8) :: ratio_fermion, ratio_boson, ratio_total, random
+        real(kind=8) :: S_old, S_new_val
+        integer :: ii, P(2), nl, nr, j
+        
+        ! 遍历所有 bonds
+        do ii = 1, 2 * Lq
+            S_old = NsigL_K%sigma(ii, ntau)
+            sigma_new(ii, ntau) = -S_old  ! 翻转
+            S_new_val = sigma_new(ii, ntau)
+            
+            P(1) = Latt%bond_list(ii, 1)
+            P(2) = Latt%bond_list(ii, 2)
+            
+            ! 计算 Delta 矩阵
+            call Op_K%get_delta(S_old, S_new_val)
+            
+            ! 计算 det ratio = det(I + Delta * (I - G))
+            ! GrU_local = I - G
+            do nr = 1, 2
+                do nl = 1, 2
+                    GrU_local(nl, nr) = ZKRON(nl, nr) - GrU(P(nl), P(nr))
+                    GrD_local(nl, nr) = ZKRON(nl, nr) - GrD(P(nl), P(nr))
+                enddo
+            enddo
+            
+            ! Prod = I + Delta * (I - G)
+            mat_tmp = matmul(dcmplx(Op_K%Delta, 0.d0), GrU_local)
+            do nr = 1, 2
+                do nl = 1, 2
+                    Prod_U(nl, nr) = ZKRON(nl, nr) + mat_tmp(nl, nr)
+                enddo
+            enddo
+            
+            mat_tmp = matmul(dcmplx(Op_K%Delta, 0.d0), GrD_local)
+            do nr = 1, 2
+                do nl = 1, 2
+                    Prod_D(nl, nr) = ZKRON(nl, nr) + mat_tmp(nl, nr)
+                enddo
+            enddo
+            
+            Proddet_U = Prod_U(1,1) * Prod_U(2,2) - Prod_U(1,2) * Prod_U(2,1)
+            Proddet_D = Prod_D(1,1) * Prod_D(2,2) - Prod_D(1,2) * Prod_D(2,1)
+            ratio_fermion = abs(Proddet_U * Proddet_D)
+            
+            ! 计算 boson ratio
+            ratio_boson = NsigL_K%bosonratio(sigma_new, ii, ntau, Latt)
+            ratio_boson = ratio_boson * gauss_boson_ratio_sigma(ii, ntau, &
+                NsigL_K%sigma, sigma_new(ii, ntau), NsigL_K%lambda, Latt)
+            
+            ratio_total = ratio_fermion * ratio_boson
+            random = ranf(iseed)
+            
+            if (abs(ratio_total) > random) then
+                call Acc_Kl%count(.true.)
+                
+                ! 更新 Green 函数（Sherman-Morrison）
+                Prodinv_U(1,1) =  Prod_U(2,2) / Proddet_U
+                Prodinv_U(2,2) =  Prod_U(1,1) / Proddet_U
+                Prodinv_U(1,2) = -Prod_U(1,2) / Proddet_U
+                Prodinv_U(2,1) = -Prod_U(2,1) / Proddet_U
+                
+                Prodinv_D(1,1) =  Prod_D(2,2) / Proddet_D
+                Prodinv_D(2,2) =  Prod_D(1,1) / Proddet_D
+                Prodinv_D(1,2) = -Prod_D(1,2) / Proddet_D
+                Prodinv_D(2,1) = -Prod_D(2,1) / Proddet_D
+                
+                ! Spin Up
+                Uhlp_U = dcmplx(0.d0, 0.d0)
+                Vhlp_U = dcmplx(0.d0, 0.d0)
+                do nl = 1, 2
+                    do j = 1, Ndim
+                        Uhlp_U(j, nl) = GrU(j, P(nl))
+                        Vhlp_U(nl, j) = -Op_K%Delta(nl, 1) * GrU(P(1), j) &
+                                       -Op_K%Delta(nl, 2) * GrU(P(2), j)
+                    enddo
+                    Vhlp_U(nl, P(1)) = Vhlp_U(nl, P(1)) + Op_K%Delta(nl, 1)
+                    Vhlp_U(nl, P(2)) = Vhlp_U(nl, P(2)) + Op_K%Delta(nl, 2)
+                enddo
+                temp = matmul(Uhlp_U, Prodinv_U)
+                Diff = matmul(temp, Vhlp_U)
+                GrU = GrU - Diff
+                
+                ! Spin Down
+                Uhlp_D = dcmplx(0.d0, 0.d0)
+                Vhlp_D = dcmplx(0.d0, 0.d0)
+                do nl = 1, 2
+                    do j = 1, Ndim
+                        Uhlp_D(j, nl) = GrD(j, P(nl))
+                        Vhlp_D(nl, j) = -Op_K%Delta(nl, 1) * GrD(P(1), j) &
+                                       -Op_K%Delta(nl, 2) * GrD(P(2), j)
+                    enddo
+                    Vhlp_D(nl, P(1)) = Vhlp_D(nl, P(1)) + Op_K%Delta(nl, 1)
+                    Vhlp_D(nl, P(2)) = Vhlp_D(nl, P(2)) + Op_K%Delta(nl, 2)
+                enddo
+                temp = matmul(Uhlp_D, Prodinv_D)
+                Diff = matmul(temp, Vhlp_D)
+                GrD = GrD - Diff
+                
+                ! 接受翻转
+                NsigL_K%sigma(ii, ntau) = sigma_new(ii, ntau)
+            else
+                call Acc_Kl%count(.false.)
+                sigma_new(ii, ntau) = NsigL_K%sigma(ii, ntau)
+            endif
+        enddo
+        
+        return
+    end subroutine LocalK_metro_simple
+    
     subroutine LocalK_metro_woodbury(GrU, GrD, iseed, ii, ntau, group_idx)
         ! 使用完整 Woodbury 公式的 metro 更新
         ! 
@@ -259,21 +527,17 @@ contains
         ! 计算 Delta * M_U（2×2）
         Delta_M_U = matmul(Delta_c, M_U)
 
-        ! K_U = I + Delta * M = I + Delta_M（注意：det ratio 用 I + Delta * M）
-        ! 但 Woodbury 用 K = I + M * Delta，所以需要转置
-        ! 实际上让我重新检查...
-        ! det ratio = det(I + Delta * M)
-        ! Woodbury: G' = G - (G*L*Delta) * (I + M*Delta)^{-1} * (R*G)
-        ! 这两个 K 不同！det ratio 用 I + Delta*M，Woodbury 用 I + M*Delta
-        ! 但 det(I + AB) = det(I + BA)，所以 det(I + Delta*M) = det(I + M*Delta)
-        ! 而 (I + Delta*M)^{-1} ≠ (I + M*Delta)^{-1} 一般情况下
-        ! 让我重新推导 Woodbury...
+        ! Woodbury 公式推导：
+        ! G' = (I + B')^{-1} = (I + B + ΔB)^{-1}
+        ! 其中 ΔB = L_cols * Delta * R_rows
         ! 
-        ! G' = (I + B')^{-1} = (I + B + L_cols*Delta*R_rows)^{-1}
         ! 设 U = L_cols * Delta（N×2），V^T = R_rows（2×N）
+        ! 则 ΔB = U * V^T
+        ! 
         ! Woodbury: G' = G - G*U*(I + V^T*G*U)^{-1}*V^T*G
-        ! V^T*G*U = R_rows * G * L_cols * Delta = M * Delta
-        ! 所以 K = I + M * Delta
+        ! 其中 V^T*G*U = R_rows * G * (L_cols * Delta) = (R_rows * G * L_cols) * Delta = M * Delta
+        ! 
+        ! 所以 K = I + V^T*G*U = I + M * Delta
         K_U = dcmplx(0.d0, 0.d0)
         K_U(1, 1) = dcmplx(1.d0, 0.d0)
         K_U(2, 2) = dcmplx(1.d0, 0.d0)
@@ -374,19 +638,26 @@ contains
         ! 
         ! 棋盘分解：B(τ) = B_4 * B_3 * B_2 * B_1
         ! 
-        ! 对于 group_k 中的 bond b，设 Delta = E'_b * E_b^{-1} - I
-        ! 则 B'_k = (I + Delta) * B_k（在 bond b 的子空间上）
-        ! 
-        ! ΔB = B' - B = L * Delta * B_k * R_orig
+        ! 对于 group_k 中的 bond b：
+        !   B_k = E_b * B_{k,other}（其中 B_{k,other} 不作用在 bond b 的端点上）
+        !   B'_k = E'_b * B_{k,other}
+        !   ΔB_k = (E'_b - E_b) * B_{k,other} = ΔE_b * B_{k,other}
+        !
+        ! ΔB(τ) = L * ΔB_k * R_orig
+        !       = L * ΔE_b * B_{k,other} * R_orig
+        !       = L * ΔE_b * R'
         ! 其中 L = B_4 * ... * B_{k+1}
         !      R_orig = B_{k-1} * ... * B_1
-        !      R = B_k * R_orig = B_k * B_{k-1} * ... * B_1
+        !      R' = B_{k,other} * R_orig
+        !
+        ! 由于 B_{k,other} 不作用在 (P1, P2) 上：
+        !   R'([P1, P2], :) = R_orig([P1, P2], :)
         !
         ! 写成 UV^T 形式：
         !   U = L(:, [P1, P2]) * Delta  (N×2)
-        !   V^T = R([P1, P2], :)        (2×N)
+        !   V^T = R_orig([P1, P2], :)   (2×N)
         !
-        ! 注意：R 需要包含 B_k！
+        ! 注意：R 不应该包含 B_k！
         !
         integer, intent(in) :: group_idx, P(2), ntau
         complex(kind=8), intent(out) :: L_cols(Ndim, 2), R_rows(2, Ndim)
@@ -409,11 +680,10 @@ contains
             call apply_group_to_cols_direct(kk, ntau, L_cols)
         enddo
         
-        ! 计算 R = B_k * B_{k-1} * ... * B_1
-        ! 从 I 开始，依次右乘 B_k, B_{k-1}, ..., B_1
-        ! 注意：R 需要包含 B_k！
-        ! 对于 group_1，R = B_1；对于 group_4，R = B_4 * B_3 * B_2 * B_1
-        do kk = group_idx, 1, -1
+        ! 计算 R = B_{k-1} * ... * B_1（不包含 B_k！）
+        ! 从 I 开始，依次右乘 B_{k-1}, B_{k-2}, ..., B_1
+        ! 注意：对于 group_1，R = I；对于 group_4，R = B_3 * B_2 * B_1
+        do kk = group_idx - 1, 1, -1
             call apply_group_to_rows_direct(kk, ntau, R_rows)
         enddo
         
@@ -975,12 +1245,16 @@ contains
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
         
-        ! 步骤 2：按组做 metro 更新（从 group_1 到 group_4）
-        ! 使用 Woodbury 公式，正确考虑棋盘分解的影响
-        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt, 1)
-        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt, 2)
-        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt, 3)
-        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt, 4)
+        ! 步骤 2：按组做 metro 更新
+        ! 在同一组内，bonds 不共享端点，所以算符对易
+        ! 可以使用标准的 Sherman-Morrison 公式
+        ! 
+        ! 但跨组时，需要考虑棋盘分解的影响
+        ! 策略：按组顺序做 metro，每组使用简单的 Sherman-Morrison
+        call LocalK_metro_group_simple(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt)
+        call LocalK_metro_group_simple(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt)
+        call LocalK_metro_group_simple(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt)
+        call LocalK_metro_group_simple(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt)
         
         ! 步骤 3：更新 UUR（使用可能更新后的 σ）
         call Op_K%mmult_R(PropU%UUR, Latt, NsigL_K%sigma, nt, 1)
