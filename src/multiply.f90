@@ -66,6 +66,11 @@ contains
         class(Propagator), intent(inout) :: PropU, PropD
         real(kind=8), dimension(Lq), intent(in) :: lambda
         integer, intent(in) :: nt
+        
+        ! 标准的 B_μ 传播
+        ! 注意：P[λ] 投影不在这里应用
+        ! 由于 P[λ] 和 B 不对易，标准传播公式不能正确处理 P[λ]
+        ! P[λ] 的效应需要在 λ 翻转时通过行列式比公式单独考虑
         call Op_MU%mmult_R(PropU%UUR, lambda, nt, 1)
         call Op_MU%mmult_R(PropD%UUR, lambda, nt, 1)
         return
@@ -75,6 +80,9 @@ contains
         class(Propagator), intent(inout) :: PropU, PropD
         real(kind=8), dimension(Lq), intent(in) :: lambda
         integer, intent(in) :: nt
+        
+        ! 标准 B_μ 传播
+        ! P_λ 的乘法在 Local_lambda_flip 中同步处理
         call Op_MU%mmult_L(PropU%Gr, lambda, nt, 1)
         call Op_MU%mmult_L(PropD%Gr, lambda, nt, 1)
         call Op_MU%mmult_R(PropU%Gr, lambda, nt, -1)
@@ -88,6 +96,8 @@ contains
         class(Propagator), intent(inout) :: PropU, PropD
         real(kind=8), dimension(Lq), intent(in) :: lambda
         integer, intent(in) :: nt
+        
+        ! 标准 B_μ 传播
         call Op_MU%mmult_R(PropU%Gr, lambda, nt, 1)
         call Op_MU%mmult_R(PropD%Gr, lambda, nt, 1)
         call Op_MU%mmult_L(PropU%Gr, lambda, nt, -1)

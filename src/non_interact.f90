@@ -32,8 +32,8 @@ module NonInteract
     end subroutine opMU_set
 
     subroutine opMU_mmult_R(this, Mat, lambda, nt, nflag)
-!   In Mat Out exp(-Dtau*mu) * Mat for nflag = 1
-!   In Mat Out exp( Dtau*mu) * Mat for nflag = -1
+!   In Mat Out exp(+Dtau*mu) * Mat for nflag = 1 (B_mu part of propagator)
+!   In Mat Out exp(-Dtau*mu) * Mat for nflag = -1 (B_mu^{-1} part)
 !   传播阶段只处理化学势 μ，λ 的投影只在构造 M=I+P_lambda·B_tot 时出现。
         class(OperatorMU), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
@@ -42,10 +42,12 @@ module NonInteract
         integer, intent(in) :: nflag
         real(kind=8) :: factor
 
+        ! nflag=1: multiply by B_mu = exp(+Dtau*mu)
+        ! nflag=-1: multiply by B_mu^{-1} = exp(-Dtau*mu)
         if (nflag == 1) then
-            factor = this%expMU_P
+            factor = this%expMU_P  ! exp(+Dtau*mu)
         elseif (nflag == -1) then
-            factor = this%expMU_M
+            factor = this%expMU_M  ! exp(-Dtau*mu)
         else
             write(6,*) "incorrect nflag in opMU_mmult"; stop
         endif
@@ -55,8 +57,8 @@ module NonInteract
     end subroutine opMU_mmult_R
 
     subroutine opMU_mmult_L(this, Mat, lambda, nt, nflag)
-!   In Mat Out Mat * exp(-Dtau*mu) for nflag = 1
-!   In Mat Out Mat * exp( Dtau*mu) for nflag = -1
+!   In Mat Out Mat * exp(+Dtau*mu) for nflag = 1 (B_mu part of propagator)
+!   In Mat Out Mat * exp(-Dtau*mu) for nflag = -1 (B_mu^{-1} part)
 !   同上：传播阶段只处理 μ，不在此处插入 λ。
         class(OperatorMU), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
@@ -65,10 +67,12 @@ module NonInteract
         integer, intent(in) :: nflag
         real(kind=8) :: factor
 
+        ! nflag=1: multiply by B_mu = exp(+Dtau*mu)
+        ! nflag=-1: multiply by B_mu^{-1} = exp(-Dtau*mu)
         if (nflag == 1) then
-            factor = this%expMU_P
+            factor = this%expMU_P  ! exp(+Dtau*mu)
         elseif (nflag == -1) then
-            factor = this%expMU_M
+            factor = this%expMU_M  ! exp(-Dtau*mu)
         else
             write(6,*) "incorrect nflag in opMU_mmult_L"; stop
         endif

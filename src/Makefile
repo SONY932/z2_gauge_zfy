@@ -1,9 +1,9 @@
-FC=mpiifort -fc=ifort 
+FC=mpif90
 
 # 默认编译选项（优化模式）
-FLAGS_OPT = -c -O3
+FLAGS_OPT = -c -O2 -fallow-argument-mismatch -ffree-line-length-none -Wno-line-truncation
 # 调试编译选项（debug模式）
-FLAGS_DEBUG = -c -O0 -g -traceback -check all -fpe0 -warn all -debug extended
+FLAGS_DEBUG = -c -O0 -g -fbacktrace -fcheck=all -Wall -fallow-argument-mismatch -ffree-line-length-none -Wno-line-truncation
 
 # 根据 MODE 变量选择编译模式（默认为优化模式）
 # 使用方法：make           （优化模式）
@@ -14,8 +14,8 @@ else
     FLAGS = $(FLAGS_OPT)
 endif
 
-LF = -mkl
-HOME = /home/lijiaqiang/lib/package_of_matrix
+LF = -llapack -lblas
+HOME = /workspace/lib/package_of_matrix
 LIBS= $(HOME)/Modules/modules_90.a \
       $(HOME)/MyEis/libeis.a \
       $(HOME)/MyNag/libnag.a \

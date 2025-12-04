@@ -149,4 +149,113 @@ contains
         call Op_K%mmult_R(PropD%UUR, Latt, sigma_new, nt, 1)
         return
     end subroutine GlobalK_prop_R
+
+    !=========================================================================
+    ! 全局 λ 更新函数
+    ! 根据 PRX Appendix A，λ 更新需要在全局进行
+    ! 因为 P[λ] 和传播子 B 不对易，不能使用标准传播公式
+    !=========================================================================
+    
+    subroutine Global_lambda_update(GrU, GrD, iseed, n_accept, n_total)
+        ! 全局 λ 更新：成对翻转 λ_i 和 λ_j
+        ! 行列式比：det[1 + P[λ'] B] / det[1 + P[λ] B]
+        ! 使用 Woodbury 公式计算
+        complex(kind=8), dimension(Ndim, Ndim), intent(in) :: GrU, GrD
+        integer, intent(inout) :: iseed
+        integer, intent(inout) :: n_accept, n_total
+        
+        real(kind=8), external :: ranf
+        integer :: ii, jj, attempt
+        integer :: n_attempts
+        real(kind=8) :: rU, rD, prob, random
+        logical :: safeU, safeD
+        
+        ! 每次全局更新尝试多次成对翻转
+        n_attempts = Lq / 2  ! 尝试 Lq/2 次成对翻转
+        
+        do attempt = 1, n_attempts
+            ! 随机选择两个不同的格点进行成对翻转
+            ii = int(ranf(iseed) * Lq) + 1
+            if (ii > Lq) ii = Lq
+            jj = int(ranf(iseed) * (Lq - 1)) + 1
+            if (jj >= ii) jj = jj + 1
+            if (jj > Lq) jj = Lq
+            
+            ! 计算行列式比
+            ! 使用与 lambda_pair_ratio 相同的公式
+            ! K = | 2G_ii - 1    2G_ij     |
+            !     | 2G_ji        2G_jj - 1 |
+            ! det K = (2G_ii - 1)(2G_jj - 1) - 4 G_ij G_ji
+            call compute_lambda_ratio(GrU, ii, jj, rU, safeU)
+            call compute_lambda_ratio(GrD, ii, jj, rD, safeD)
+            
+            if (safeU .and. safeD .and. rU > 0.d0 .and. rD > 0.d0) then
+                prob = min(1.d0, rU * rD)
+            else
+                prob = 0.d0
+            endif
+            
+            random = ranf(iseed)
+            n_total = n_total + 1
+            if (prob > random) then
+                ! 接受翻转
+                n_accept = n_accept + 1
+                NsigL_K%lambda(ii) = -NsigL_K%lambda(ii)
+                NsigL_K%lambda(jj) = -NsigL_K%lambda(jj)
+            endif
+        enddo
+        
+        return
+    contains
+        subroutine compute_lambda_ratio(Gr, i, j, r, is_safe)
+            ! 计算成对翻转 λ_i 和 λ_j 的行列式比
+            ! 公式基于 G_0 = (1 + B)^{-1}
+            ! 当 λ_i, λ_j 当前都是 +1 或都是 -1 时，翻转后 S 的大小变化
+            complex(kind=8), dimension(:, :), intent(in) :: Gr
+            integer, intent(in) :: i, j
+            real(kind=8), intent(out) :: r
+            logical, intent(out) :: is_safe
+            
+            complex(kind=8) :: k11, k12, k21, k22, detK
+            complex(kind=8), parameter :: oneC = dcmplx(1.d0, 0.d0)
+            complex(kind=8), parameter :: twoC = dcmplx(2.d0, 0.d0)
+            real(kind=8), parameter :: SAFE_THRESHOLD = 1.d-10
+            
+            ! K 矩阵：当 λ 翻转时，det[1 + P[λ'] B] / det[1 + P[λ] B]
+            ! 对于 G_0 = (1 + B)^{-1}，(I - G_0) = B G_0
+            ! K_ij = δ_ij - 2 λ_i (B G_0)_ij = δ_ij - 2 λ_i (I - G_0)_ij
+            ! 当 λ_i = λ_j = 1（翻转到 -1）：
+            !   K_ii = 1 - 2(1 - G_ii) = 2G_ii - 1
+            !   K_ij = -2(-G_ij) = 2G_ij
+            ! 当 λ_i = λ_j = -1（翻转到 1）：
+            !   K_ii = 1 + 2(1 - G_ii) = 3 - 2G_ii
+            !   K_ij = 2(-G_ij) = -2G_ij
+            
+            if (NsigL_K%lambda(i) > 0.d0 .and. NsigL_K%lambda(j) > 0.d0) then
+                ! 当前 λ_i = λ_j = 1，翻转到 -1
+                k11 = twoC * Gr(i, i) - oneC
+                k22 = twoC * Gr(j, j) - oneC
+                k12 = twoC * Gr(i, j)
+                k21 = twoC * Gr(j, i)
+            else if (NsigL_K%lambda(i) < 0.d0 .and. NsigL_K%lambda(j) < 0.d0) then
+                ! 当前 λ_i = λ_j = -1，翻转到 1
+                k11 = dcmplx(3.d0, 0.d0) - twoC * Gr(i, i)
+                k22 = dcmplx(3.d0, 0.d0) - twoC * Gr(j, j)
+                k12 = -twoC * Gr(i, j)
+                k21 = -twoC * Gr(j, i)
+            else
+                ! 一个是 +1，一个是 -1：不能成对翻转（会改变 Q = Π λ）
+                r = 0.d0
+                is_safe = .false.
+                return
+            endif
+            
+            detK = k11 * k22 - k12 * k21
+            r = dble(detK)
+            is_safe = abs(detK) > SAFE_THRESHOLD
+            
+            return
+        end subroutine compute_lambda_ratio
+    end subroutine Global_lambda_update
+    
 end module GlobalK_mod

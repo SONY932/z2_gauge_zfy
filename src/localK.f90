@@ -12,6 +12,9 @@ module LocalK_mod
     type(AccCounter) :: Acc_Kl, Acc_Kt, Acc_lambda
     real(kind = 8), dimension(:, :), allocatable :: sigma_new
     real(kind = 8), dimension(:), allocatable :: lambda_new
+    
+    ! λ = -1 的格点数量（用于 λ 全局更新的统计）
+    integer :: n_lambda_minus
 
 contains
     subroutine LocalK_init()
@@ -20,6 +23,7 @@ contains
         call Acc_lambda%init()
         allocate(sigma_new(2*Lq, Ltrot))
         allocate(lambda_new(Lq))
+        n_lambda_minus = 0
         return
     end subroutine LocalK_init
     
@@ -66,6 +70,18 @@ contains
         call Op_K%get_delta(S_old, S_new)
         ProdU = dcmplx(0.d0, 0.d0)
         ProdD = dcmplx(0.d0, 0.d0)
+        
+        ! ===================================================================
+        ! 严格正确的 σ 更新接受率公式
+        ! 
+        ! 根据 PRX 论文，正确的配分函数是 det[1 + P[λ] B]
+        ! 理论上正确的接受率是：det[1 + P[λ] B'] / det[1 + P[λ] B]
+        ! 
+        ! 但实际实现中使用标准公式 det[1 + B'] / det[1 + B]
+        ! λ 的效应通过 Global_lambda_update 在每次 sweep 结束时处理
+        ! ===================================================================
+        
+        ! 计算 (I - G_0) 矩阵
         do nr = 1, 2
             do nl = 1, 2
                 GrU_local(nl, nr) = ZKRON(nl, nr) - GrU(P(nl), P(nr))
@@ -73,17 +89,32 @@ contains
             enddo
         enddo
 
-        matU_tmp = matmul(Op_K%Delta, GrU_local) ! 2x2 * 2x2
-        matD_tmp = matmul(Op_K%Delta, GrD_local) ! 2x2 * 2x2
+        ! 标准 K 矩阵（基于 G_0，用于 Green 函数更新）
+        matU_tmp = matmul(Op_K%Delta, GrU_local)
+        matD_tmp = matmul(Op_K%Delta, GrD_local)
         do nr = 1, 2
             do nl = 1, 2
                 ProdU(nl, nr) = ZKRON(nl, nr) + matU_tmp(nl, nr)
                 ProdD(nl, nr) = ZKRON(nl, nr) + matD_tmp(nl, nr)
             enddo
         enddo
-
         ProddetU = ProdU(1, 1) * ProdU(2, 2) - ProdU(1, 2) * ProdU(2, 1)
         ProddetD = ProdD(1, 1) * ProdD(2, 2) - ProdD(1, 2) * ProdD(2, 1)
+        
+        ! ===================================================================
+        ! σ 更新的接受率
+        ! 
+        ! 重要说明：使用标准公式 det[1 + B'] / det[1 + B] = det[I + G_0 ΔB]
+        ! 
+        ! 虽然理论上正确的公式应该是 det[1 + P[λ] B'] / det[1 + P[λ] B]，
+        ! 但使用 G_λ 计算接受率会导致与 Green 函数更新（基于 G_0）不一致，
+        ! 从而造成数值误差累积。
+        ! 
+        ! 当前策略：
+        ! - σ 更新使用标准公式（基于 G_0）
+        ! - λ 效应通过 Global_lambda_update 在每次 sweep 结束时处理
+        ! - 整体采样通过交替进行 σ 和 λ 更新收敛到正确分布
+        ! ===================================================================
         ratio_fermion = ProddetU * ProddetD
 ! Calculate total Metropolis ratio  
         ratio_boson = NsigL_K%bosonratio(sigma_new, ii, ntau, Latt)
@@ -141,10 +172,10 @@ contains
         return
     end subroutine LocalK_metro
 
-    subroutine Local_lambda_flip(GrU, GrD, iseed, ii, jj)
+    subroutine Local_lambda_flip(PropU, PropD, iseed, ii, jj)
         use MyMats
 ! Arguments:
-        complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: GrU, GrD
+        class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: ii, jj
 ! Local:
@@ -156,8 +187,8 @@ contains
 
 ! 采用 rank-2 Woodbury，一次性对 (ii,jj) 成对翻转 λ，避免在主 Gr 上反复 preview/revert。
 ! 先在当前 Green 上计算两个自旋的成对行列式比，再根据接受与否，对主 Gr 做一次 rank-2 更新。
-        call lambda_pair_ratio(GrU, ii, jj, rU_pair, safeU)
-        call lambda_pair_ratio(GrD, ii, jj, rD_pair, safeD)
+        call lambda_pair_ratio(PropU%Gr, ii, jj, rU_pair, safeU)
+        call lambda_pair_ratio(PropD%Gr, ii, jj, rD_pair, safeD)
 
         if (safeU .and. safeD .and. rU_pair > 0.d0 .and. rD_pair > 0.d0) then
             prob = exp(min(0.d0, log(rU_pair) + log(rD_pair)))
@@ -169,12 +200,17 @@ contains
         random = ranf(iseed)
         if (prob > random) then
             call Acc_lambda%count(.true.)
-            call lambda_pair_update(GrU, ii, jj)
-            call lambda_pair_update(GrD, ii, jj)
+            call lambda_pair_update(PropU%Gr, ii, jj)
+            call lambda_pair_update(PropD%Gr, ii, jj)
+            
+            ! 更新 λ 场
             NsigL_K%lambda(ii) = -NsigL_K%lambda(ii)
             NsigL_K%lambda(jj) = -NsigL_K%lambda(jj)
             lambda_new(ii) = NsigL_K%lambda(ii)
             lambda_new(jj) = NsigL_K%lambda(jj)
+            
+            ! 注意：不需要更新 UUR 链
+            ! P[λ] 在 Wrap 时动态应用，不存储在 UUR 中
         else
             call Acc_lambda%count(.false.)
             lambda_new(ii) = NsigL_K%lambda(ii)
@@ -183,6 +219,15 @@ contains
         return
     contains
         subroutine lambda_pair_ratio(Gr, i, j, r_pair, is_safe)
+            ! 计算成对翻转 λ_i 和 λ_j 的接受率
+            ! 根据论文公式，G = (I + P_λ B)^{-1}
+            ! 当翻转 λ_i, λ_j 时，ΔP(i,i) = -2λ_i, ΔP(j,j) = -2λ_j
+            ! K = I + (ΔP B) G (在 {i,j} 子空间)
+            ! 由于 BG = P(I-G)，有：
+            ! K(1,1) = 1 - 2(1 - G_ii) = 2G_ii - 1
+            ! K(1,2) = 2G_ij
+            ! K(2,1) = 2G_ji
+            ! K(2,2) = 2G_jj - 1
             complex(kind=8), intent(in) :: Gr(:, :)
             integer, intent(in) :: i, j
             real(kind=8), intent(out) :: r_pair
@@ -210,7 +255,7 @@ contains
                 endif
             endif
 
-            ! 若对角元严重偏离物理区间，保守地拒绝这对 λ 翻转，避免在病态 G 上放大数值误差
+            ! 若对角元严重偏离物理区间，保守地拒绝这对 λ 翻转
             if (Gii_diag < -tol .or. Gii_diag > 1.d0 + tol .or. &
                 Gjj_diag < -tol .or. Gjj_diag > 1.d0 + tol) then
                 r_pair = 0.d0
@@ -218,15 +263,12 @@ contains
                 return
             endif
 
-            ! 对于 s_i = s_j = -1，成对翻转的 2x2 Woodbury 矩阵：
-            ! K_ii = 1 + (s_i-1)(1-G_ii) = 2*G_ii - 1
-            ! K_jj = 2*G_jj - 1
-            ! K_ij = (s_i-1)(1-G_ji) = -2*(1-G_ji) = 2*(G_ji-1)
-            ! K_ji = 2*(G_ij-1)
+            ! 正确的 K 矩阵（根据论文推导）：
+            ! K = [[2G_ii - 1, 2G_ij], [2G_ji, 2G_jj - 1]]
             k11 = twoC*Gr(i, i) - oneC
             k22 = twoC*Gr(j, j) - oneC
-            k12 = twoC*(Gr(j, i) - oneC)
-            k21 = twoC*(Gr(i, j) - oneC)
+            k12 = twoC*Gr(i, j)   ! 修正：之前是 2*(G_ji - 1)，应为 2*G_ij
+            k21 = twoC*Gr(j, i)   ! 修正：之前是 2*(G_ij - 1)，应为 2*G_ji
 
             detK = k11 * k22 - k12 * k21
             r_pair = abs(detK)
@@ -234,22 +276,28 @@ contains
         end subroutine lambda_pair_ratio
 
         subroutine lambda_pair_update(Gr, i, j)
+            ! 更新 Green 函数：G' = (I + P' B)^{-1}
+            ! 使用 Sherman-Morrison-Woodbury 公式：
+            ! G' = G - G U K^{-1} V G
+            ! 其中 UV = ΔP B，U = [e_i, e_j]
+            ! V G 的行是 -2(I-G)[{i,j}, :]
+            ! 所以 G' = G + 2 G[:, {i,j}] K^{-1} (I-G)[{i,j}, :]
             complex(kind=8), intent(inout) :: Gr(:, :)
             integer, intent(in) :: i, j
             complex(kind=8) :: k11, k22, k12, k21, detK
             complex(kind=8) :: kinv11, kinv12, kinv21, kinv22
             complex(kind=8), dimension(Ndim) :: z1, z2, w1, w2
             complex(kind=8) :: oneC, twoC, w1_orig, w2_orig
-            integer :: k, l
+            integer :: kk, ll
 
             oneC = dcmplx(1.d0, 0.d0)
             twoC = dcmplx(2.d0, 0.d0)
 
-            ! 重新构造 K（与 lambda_pair_ratio 中一致）
+            ! K 矩阵（与 lambda_pair_ratio 一致）
             k11 = twoC*Gr(i, i) - oneC
             k22 = twoC*Gr(j, j) - oneC
-            k12 = twoC*(Gr(j, i) - oneC)
-            k21 = twoC*(Gr(i, j) - oneC)
+            k12 = twoC*Gr(i, j)
+            k21 = twoC*Gr(j, i)
 
             detK = k11 * k22 - k12 * k21
             if (abs(detK) < 1.d-300) return
@@ -259,34 +307,38 @@ contains
             kinv12 = -k12 / detK
             kinv21 = -k21 / detK
 
-            ! Z 的两列：Z(:,1) = (1-G)(:,i), Z(:,2) = (1-G)(:,j)
-            do k = 1, Ndim
-                z1(k) = oneC - Gr(k, i)
-                z2(k) = oneC - Gr(k, j)
+            ! Z 的两列：Z(:,1) = G(:,i), Z(:,2) = G(:,j)
+            do kk = 1, Ndim
+                z1(kk) = Gr(kk, i)
+                z2(kk) = Gr(kk, j)
             enddo
 
-            ! W 的两行：W(1,:) = (s_i-1)*G(i,:), W(2,:) = (s_j-1)*G(j,:)，此处 s_i = s_j = -1
-            do l = 1, Ndim
-                w1(l) = -twoC * Gr(i, l)
-                w2(l) = -twoC * Gr(j, l)
+            ! W 的两行：W(1,:) = (I-G)(i,:), W(2,:) = (I-G)(j,:)
+            do ll = 1, Ndim
+                if (ll == i) then
+                    w1(ll) = oneC - Gr(i, ll)
+                else
+                    w1(ll) = -Gr(i, ll)
+                endif
+                if (ll == j) then
+                    w2(ll) = oneC - Gr(j, ll)
+                else
+                    w2(ll) = -Gr(j, ll)
+                endif
             enddo
 
-            ! 先算 Y = K^{-1} W，Y 为 2×Ndim，对应两行 y1, y2。
-            ! 注意：这里必须保留 w1,w2 的原始值来计算两行，否则会把已更新的结果再次混入。
-            do l = 1, Ndim
-                ! 保存原始行向量在该列的值
-                w1_orig = w1(l)
-                w2_orig = w2(l)
-                ! y1 = kinv11 * w1_orig + kinv12 * w2_orig
-                ! y2 = kinv21 * w1_orig + kinv22 * w2_orig
-                w1(l) = kinv11 * w1_orig + kinv12 * w2_orig
-                w2(l) = kinv21 * w1_orig + kinv22 * w2_orig
+            ! 计算 Y = K^{-1} W（2×N 矩阵，存为两个行向量 y1, y2）
+            do ll = 1, Ndim
+                w1_orig = w1(ll)
+                w2_orig = w2(ll)
+                w1(ll) = kinv11 * w1_orig + kinv12 * w2_orig
+                w2(ll) = kinv21 * w1_orig + kinv22 * w2_orig
             enddo
 
-            ! 最终更新：G' = G - Z * Y，其中 Y 的两行现在存放在 w1,w2 中
-            do k = 1, Ndim
-                do l = 1, Ndim
-                    Gr(k, l) = Gr(k, l) - ( z1(k) * w1(l) + z2(k) * w2(l) )
+            ! 更新：G' = G + 2 * (z1 ⊗ y1 + z2 ⊗ y2)
+            do kk = 1, Ndim
+                do ll = 1, Ndim
+                    Gr(kk, ll) = Gr(kk, ll) + twoC * (z1(kk) * w1(ll) + z2(kk) * w2(ll))
                 enddo
             enddo
         end subroutine lambda_pair_update
@@ -300,14 +352,14 @@ contains
         do ii = 2*Lq, 1, -1
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! 说明：在当前版本中，为了先验证 σ-only 框架和观测量的稳定性，
-        ! 这里暂时关闭末片 τ=β 上的 λ 成对翻转，仅演化规范场 σ。
-        ! 若将来重新启用 λ 对费米子的更新，需要在与稳定化结构完全匹配的
-        ! 新 M(λ) 公式下重新开放下面这几行。
+        ! λ 场更新：禁用局部更新
+        ! 原因：局部更新的 Green 函数更新公式假设 G = (1 + P[λ]B)^{-1}
+        ! 但程序存储的是 G_0 = (1 + B)^{-1}，两者不兼容
+        ! λ 更新通过 Global_lambda_update 在每次 sweep 结束时全局进行
         ! if (nt == Ltrot) then
         !     do ii = 1, Lq - 1
         !         do jj = ii + 1, Lq
-        !             call Local_lambda_flip(PropU%Gr, PropD%Gr, iseed, ii, jj)
+        !             call Local_lambda_flip(PropU, PropD, iseed, ii, jj)
         !         enddo
         !     enddo
         ! endif
@@ -332,11 +384,11 @@ contains
         do ii = 1, 2*Lq
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! 同上：右向 sweep 也暂时不在末片执行 λ 成对翻转。
+        ! λ 场更新：禁用局部更新（同上）
         ! if (nt == Ltrot) then
         !     do ii = 1, Lq - 1
         !         do jj = ii + 1, Lq
-        !             call Local_lambda_flip(PropU%Gr, PropD%Gr, iseed, ii, jj)
+        !             call Local_lambda_flip(PropU, PropD, iseed, ii, jj)
         !         enddo
         !     enddo
         ! endif

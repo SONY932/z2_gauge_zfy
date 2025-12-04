@@ -21,6 +21,8 @@ module OperatorKin_mod
 contains
     subroutine opK_set(this)
         class(OperatorKin), intent(inout) :: this
+        ! Symmetric checkerboard decomposition uses alpha = 0.5*Dtau*RT per sweep
+        ! Two sweeps (forward + backward) give effective exp(Dtau*RT*sigma)
         this%alpha = 0.5d0 * Dtau * RT
         this%alpha_2 = Dtau * RT
         return
