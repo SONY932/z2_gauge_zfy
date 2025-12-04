@@ -5,7 +5,7 @@ module OperatorKin_mod
     public
 
     type :: OperatorKin
-        real(kind = 8), private :: alpha, alpha_2
+        real(kind = 8), public :: alpha, alpha_2  ! 改为 public 以便在 localK 中使用
         real(kind = 8), private :: entryC
         real(kind = 8), private :: entryS
 
@@ -21,9 +21,9 @@ module OperatorKin_mod
 contains
     subroutine opK_set(this)
         class(OperatorKin), intent(inout) :: this
-        ! Symmetric checkerboard decomposition uses alpha = 0.5*Dtau*RT per sweep
-        ! Two sweeps (forward + backward) give effective exp(Dtau*RT*sigma)
-        this%alpha = 0.5d0 * Dtau * RT
+        ! 标准棋盘分解：每个 group 操作一次，使用完整步长
+        ! 这与 get_delta 中的计算一致
+        this%alpha = Dtau * RT
         this%alpha_2 = Dtau * RT
         return
     end subroutine opK_set
@@ -60,7 +60,8 @@ contains
 
     subroutine opK_mmult_R(this, Mat, Latt, sigma, ntau, nflag)
 ! In Mat Out U(NF) * EXP(D(NF)) * Mat
-! Symmetrized checkerboard decomposition: forward (1->2->3->4) then backward (4->3->2->1)
+! 直接按顺序处理所有键（无棋盘分解）
+! 这与 LocalK_metro 中的 Green 函数更新一致
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
@@ -68,19 +69,27 @@ contains
         real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: ntau, nflag
 ! Local:
-        integer :: ig
+        integer :: ii, P(2), jj
+        real(kind = 8) :: vec
+        complex(kind=8), dimension(2, Ndim) :: Vhlp
 
-        ! Forward sweep: group 1 -> 2 -> 3 -> 4
-        call process_group(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-
-        ! Backward sweep: group 4 -> 3 -> 2 -> 1 (for symmetrization)
-        call process_group(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
+        ! 按顺序处理所有键
+        do ii = 1, 2*Lq
+            vec = sigma(ii, ntau)
+            call this%get_exp(vec, nflag)
+            P(1) = Latt%bond_list(ii, 1)
+            P(2) = Latt%bond_list(ii, 2)
+            
+            ! Apply 2x2 Givens rotation: [C S; S C] to rows P(1) and P(2)
+            do jj = 1, Ndim
+                Vhlp(1, jj) = this%entryC * Mat(P(1), jj) + this%entryS * Mat(P(2), jj)
+                Vhlp(2, jj) = this%entryS * Mat(P(1), jj) + this%entryC * Mat(P(2), jj)
+            enddo
+            do jj = 1, Ndim
+                Mat(P(1), jj) = Vhlp(1, jj)
+                Mat(P(2), jj) = Vhlp(2, jj)
+            enddo
+        enddo
 
         return
     end subroutine opK_mmult_R
@@ -121,25 +130,36 @@ contains
 
     subroutine opK_mmult_L(this, Mat, Latt, sigma, ntau, nflag)
 ! In Mat Out Mat * EXP(D(NF)) * UT(NF)
-! Symmetrized checkerboard decomposition: forward (1->2->3->4) then backward (4->3->2->1)
+! 直接按相反顺序处理所有键（无棋盘分解）
+! 左乘需要按相反顺序以保持一致性
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
         class(SquareLattice), intent(in) :: Latt
         real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: ntau, nflag
+! Local:
+        integer :: ii, P(2), jj
+        real(kind = 8) :: vec
+        complex(kind=8), dimension(Ndim, 2) :: Uhlp
 
-        ! Forward sweep: group 1 -> 2 -> 3 -> 4
-        call process_group_L(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-
-        ! Backward sweep: group 4 -> 3 -> 2 -> 1 (for symmetrization)
-        call process_group_L(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
+        ! 按相反顺序处理所有键
+        do ii = 2*Lq, 1, -1
+            vec = sigma(ii, ntau)
+            call this%get_exp(vec, nflag)
+            P(1) = Latt%bond_list(ii, 1)
+            P(2) = Latt%bond_list(ii, 2)
+            
+            ! Apply 2x2 Givens rotation: [C S; S C] to columns P(1) and P(2)
+            do jj = 1, Ndim
+                Uhlp(jj, 1) = Mat(jj, P(1)) * this%entryC + Mat(jj, P(2)) * this%entryS
+                Uhlp(jj, 2) = Mat(jj, P(1)) * this%entryS + Mat(jj, P(2)) * this%entryC
+            enddo
+            do jj = 1, Ndim
+                Mat(jj, P(1)) = Uhlp(jj, 1)
+                Mat(jj, P(2)) = Uhlp(jj, 2)
+            enddo
+        enddo
 
         return
     end subroutine opK_mmult_L

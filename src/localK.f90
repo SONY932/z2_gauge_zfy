@@ -514,47 +514,51 @@ contains
     end subroutine Local_lambda_flip
 
     subroutine LocalK_prop_L(PropU, PropD, iseed, nt)
+        ! 向左扫描时的传播：从 τ 到 τ-1
+        ! 使用标准方法：先做所有 metro 更新，再做完整的 wrap
+        ! 这与 CodeXun 的实现一致
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
-        integer :: ii, jj
+        integer :: ii
+        
+        ! 按相反顺序对所有键做 metro 更新
         do ii = 2*Lq, 1, -1
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! λ 场更新：暂时禁用
-        ! 问题说明：
-        ! 成对 λ 更新假设 Green 函数是 G_λ = (I + P_λ B)^{-1}
-        ! 但当前程序存储的是 G_0 = (I + B)^{-1}
-        ! 这导致 Green 函数更新公式不正确
-        ! 
-        ! 解决方案（待实现）：
-        ! 1. 在 stab_green 中应用 P[λ] 投影，存储 G_λ
-        ! 2. 修改传播公式以兼容 G_λ
-        ! 3. 或者使用全局重新计算方式进行 λ 更新
-        !
-        ! 当前状态：只启用了 σ 更新中的高斯约束玻色权重
+        
+        ! 完整的 wrap：G -> B * G * B^{-1}
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
         call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
+        
+        ! 更新 UUL 累积传播子
         call Op_K%mmult_L(PropU%UUL, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropD%UUL, Latt, NsigL_K%sigma, nt, 1)
         return
     end subroutine LocalK_prop_L
 
     subroutine LocalK_prop_R(PropU, PropD, iseed, nt)
+        ! 向右扫描时的传播：从 τ-1 到 τ
+        ! 使用标准方法：先做完整的 wrap，再做所有 metro 更新
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
-        integer :: ii, jj
+        integer :: ii
+        
+        ! 完整的 wrap：G -> B * G * B^{-1}
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
+        
+        ! 按顺序对所有键做 metro 更新
         do ii = 1, 2*Lq
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! λ 场更新：暂时禁用（原因同上）
+        
+        ! 更新 UUR 累积传播子
         call Op_K%mmult_R(PropU%UUR, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropD%UUR, Latt, NsigL_K%sigma, nt, 1)
         return

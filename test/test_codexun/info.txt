@@ -1,0 +1,33 @@
+ =========================
+ SU(N) t-U-J, Projector 
+ Linear lengh Lx                                :           4
+ Linear lengh Ly                                :           4
+ Hopping x-orbital horizontal                   :   1.0000000000000000     
+ Hopping x-orbital vertical                     :  0.50000000000000000     
+ Hopping y-orbital horizontal                   :  0.50000000000000000     
+ Hopping y-orbital vertical                     :   1.0000000000000000     
+ Phonon mass                                    :  0.50000000000000000     
+ Yukawa coupling                                :  0.50000000000000000     
+ Phonon velocity                                :   2.0000000000000000     
+ Phonon quartic term                            :   1.0000000000000000     
+ uniform chemical potential mu                  :   0.0000000000000000     
+ Local update Boson field magnitude Shift       :  0.20000000000000001     
+ # Warm                                         :          50
+ Thermalize Boson field magnitude x direction   :  0.20000000000000001     
+ Thermalize Boson field magnitude y direction   :  0.20000000000000001     
+ Magnitude of Gaussian distribution             :   0.0000000000000000     
+ Choosing initial distribution                  :           1
+ Theta                                          :   2.0000000000000000     
+ Trotter number                                 :           8
+ =>Dtau                                         :  0.25000000000000000     
+ N_Ortho                                        :           2
+ # Bins                                         :           5
+ # Local                                        :           2
+ Length of fam.                                 :           8
+ Magnetic field (in units of Flux quanta )      :   1.0000000000000000     
+ # Nodes                                        :           1
+ Thermalize Accept Ratio                        :  0.96734374999999995     
+ Accept_Klocal_shift                            :  0.95898437500000000     
+ Max diff Matrix                                :   6.3633495917576227E-013
+ Mean diff Matrix                               :   5.9425912243851329E-013
+ Tot CPU time                                   :   5.3280242999999998E-002

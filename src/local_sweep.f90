@@ -169,12 +169,12 @@ contains
                 call this%sweep_R(PropU, PropD, WrU, WrD, iseed, toggle, Nobs, Nobst)
                 call this%sweep_L(PropU, PropD, WrU, WrD, iseed, Nobs)
             endif
-            ! λ 更新在 sweep 结束后进行（global update 方式）
-            ! 此时 Green 函数刚刚被稳定化，避免了 local update 中的数值不稳定
-            ! 注意：λ 可以单格点翻转，不需要成对
-            call Global_lambda_update(PropU%Gr, PropD%Gr, iseed, n_lambda_accept, n_lambda_total)
-            ! 更新 λ 接受率统计
-            call update_lambda_acc(n_lambda_accept, n_lambda_total)
+            ! λ 更新暂时禁用以测试数值稳定性
+            ! TODO: λ 更新会导致 Green 函数不一致，需要重新设计
+            ! call Global_lambda_update(PropU%Gr, PropD%Gr, iseed, n_lambda_accept, n_lambda_total)
+            ! call update_lambda_acc(n_lambda_accept, n_lambda_total)
+            n_lambda_accept = 0
+            n_lambda_total = 0
         enddo
         call Obs_equal%ave(Nobs)
         if (toggle) call Obs_tau%ave(Nobst)

@@ -364,10 +364,14 @@ contains
     
     real(kind=8) function compare_mat(Gr, Gr2) result(dif)
         complex(kind=8), dimension(Ndim, Ndim), intent(in) :: Gr, Gr2
-        ! 为与原 AFM-ISING 代码保持一致，这里使用逐元差值的最大值
-        ! 而不是所有元绝对值之和。否则在大 Ndim 下误差度量会被尺寸放大，
-        ! 导致 dif 数值看起来很大、频繁触发 “ortho unstable” 诊断。
-        dif = maxval( abs(Gr - Gr2) )
+        ! 使用与 CodeXun 相同的方式：所有元素绝对差值之和
+        integer :: nl, nr
+        dif = 0.d0
+        do nr = 1, Ndim
+            do nl = 1, Ndim
+                dif = dif + real( abs(Gr(nl, nr) - Gr2(nl, nr)) )
+            enddo
+        enddo
         return
     end function compare_mat
     
@@ -426,7 +430,7 @@ contains
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
-            if (dif .ge. 5.0d-3) write(6,*) nt, dif, "left ortho unstable in RANK ", IRANK
+            if (dif .ge. 5.5d-5) write(6,*) nt, dif, "left ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
             Prop%Gr = Gr
         endif
@@ -465,7 +469,7 @@ contains
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
-            if (dif .ge. 5.0d-3) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK
+            if (dif .ge. 5.5d-5) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
             Prop%Gr = Gr
         endif
@@ -496,15 +500,15 @@ contains
 ! stabilization test
         dif = compare_mat(Gr_tmp%Gr0t, PropGr%Gr0t)
         if (dif > PropGr%Xmaxm(1)) PropGr%Xmaxm(1) = dif
-        if (dif .ge. 5.0d-3) write(6,*) nt, dif, "GR0T ortho unstable in RANK ", IRANK
+        if (dif .ge. 5.5d-5) write(6,*) nt, dif, "GR0T ortho unstable in RANK ", IRANK
         PropGr%Xmeanm(1) = PropGr%Xmeanm(1) + dif
         dif = compare_mat(Gr_tmp%Grt0, PropGr%Grt0)
         if (dif > PropGr%Xmaxm(2)) PropGr%Xmaxm(2) = dif
-        if (dif .ge. 5.0d-3) write(6,*) nt, dif, "GRT0 ortho unstable in RANK ", IRANK
+        if (dif .ge. 5.5d-5) write(6,*) nt, dif, "GRT0 ortho unstable in RANK ", IRANK
         PropGr%Xmeanm(2) = PropGr%Xmeanm(2) + dif
         dif = compare_mat(Gr_tmp%Grtt, PropGr%Grtt)
         if (dif > PropGr%Xmaxm(3)) PropGr%Xmaxm(3) = dif
-        if (dif .ge. 5.0d-3) write(6,*) nt, dif, "GRTT ortho unstable in RANK ", IRANK
+        if (dif .ge. 5.5d-5) write(6,*) nt, dif, "GRTT ortho unstable in RANK ", IRANK
         PropGr%Xmeanm(3) = PropGr%Xmeanm(3) + dif
         PropGr%Gr00 = Gr_tmp%Gr00
         PropGr%Gr0t = Gr_tmp%Gr0t
