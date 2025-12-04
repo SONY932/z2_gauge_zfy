@@ -61,36 +61,23 @@ contains
     end subroutine opK_get_delta
 
     subroutine opK_mmult_R(this, Mat, Latt, sigma, ntau, nflag)
-! In Mat Out U(NF) * EXP(D(NF)) * Mat
-! 按顺序处理所有键（不使用棋盘分解）
+! In Mat Out B * Mat，使用棋盘分解
+! B = B_4 * B_3 * B_2 * B_1
+! B * Mat = B_4 * B_3 * B_2 * B_1 * Mat
+! 所以先乘 B_1，然后 B_2，然后 B_3，最后 B_4
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
         class(SquareLattice), intent(in) :: Latt
         real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: ntau, nflag
-! Local:
-        integer :: ii, P(2), jj
-        real(kind = 8) :: vec
-        complex(kind=8), dimension(2, Ndim) :: Vhlp
 
-        ! 按顺序处理所有键
-        do ii = 1, 2*Lq
-            vec = sigma(ii, ntau)
-            call this%get_exp(vec, nflag)
-            P(1) = Latt%bond_list(ii, 1)
-            P(2) = Latt%bond_list(ii, 2)
-            
-            ! Apply 2x2 Givens rotation: [C S; S C] to rows P(1) and P(2)
-            do jj = 1, Ndim
-                Vhlp(1, jj) = this%entryC * Mat(P(1), jj) + this%entryS * Mat(P(2), jj)
-                Vhlp(2, jj) = this%entryS * Mat(P(1), jj) + this%entryC * Mat(P(2), jj)
-            enddo
-            do jj = 1, Ndim
-                Mat(P(1), jj) = Vhlp(1, jj)
-                Mat(P(2), jj) = Vhlp(2, jj)
-            enddo
-        enddo
+        ! 按棋盘分解顺序处理：group_1 -> group_2 -> group_3 -> group_4
+        ! 这样 B * Mat = B_4 * B_3 * B_2 * B_1 * Mat
+        call process_group(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
+        call process_group(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
+        call process_group(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
+        call process_group(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
 
         return
     end subroutine opK_mmult_R
@@ -143,42 +130,23 @@ contains
     end subroutine process_group
 
     subroutine opK_mmult_L(this, Mat, Latt, sigma, ntau, nflag)
-! In Mat Out Mat * EXP(D(NF)) * UT(NF)
-! 按相反顺序处理所有键，确保和 mmult_R 给出相同的 B 矩阵
-! mmult_R 给出 B * G = B_n * ... * B_1 * G（按正向顺序处理）
-! mmult_L 给出 G * B = G * B_n * ... * B_1（按相反顺序处理）
-! 这样 B 矩阵定义一致：B = B_n * ... * B_1
-! 按相反顺序处理时：先乘 B_n，再乘 B_{n-1}，...，最后乘 B_1
-! 结果是 Mat * B_n * B_{n-1} * ... * B_1 = Mat * B
+! In Mat Out Mat * B，使用棋盘分解
+! B = B_4 * B_3 * B_2 * B_1（按组从后往前乘）
+! Mat * B = Mat * B_4 * B_3 * B_2 * B_1
+! 所以先乘 B_4，然后 B_3，然后 B_2，最后 B_1
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
         class(SquareLattice), intent(in) :: Latt
         real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: ntau, nflag
-! Local:
-        integer :: ii, P(2), jj
-        real(kind = 8) :: vec
-        complex(kind=8), dimension(Ndim, 2) :: Uhlp
 
-        ! 按相反顺序处理所有键：先乘 B_n，最后乘 B_1
-        ! Mat -> Mat * B_n -> Mat * B_n * B_{n-1} -> ... -> Mat * B_n * ... * B_1
-        do ii = 2*Lq, 1, -1
-            vec = sigma(ii, ntau)
-            call this%get_exp(vec, nflag)
-            P(1) = Latt%bond_list(ii, 1)
-            P(2) = Latt%bond_list(ii, 2)
-            
-            ! Apply 2x2 Givens rotation: [C S; S C] to columns P(1) and P(2)
-            do jj = 1, Ndim
-                Uhlp(jj, 1) = Mat(jj, P(1)) * this%entryC + Mat(jj, P(2)) * this%entryS
-                Uhlp(jj, 2) = Mat(jj, P(1)) * this%entryS + Mat(jj, P(2)) * this%entryC
-            enddo
-            do jj = 1, Ndim
-                Mat(jj, P(1)) = Uhlp(jj, 1)
-                Mat(jj, P(2)) = Uhlp(jj, 2)
-            enddo
-        enddo
+        ! 按棋盘分解顺序处理：group_4 -> group_3 -> group_2 -> group_1
+        ! 这样 Mat * B = Mat * B_4 * B_3 * B_2 * B_1
+        call process_group_L(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
+        call process_group_L(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
+        call process_group_L(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
+        call process_group_L(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
 
         return
     end subroutine opK_mmult_L

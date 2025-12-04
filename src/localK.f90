@@ -511,40 +511,33 @@ contains
     subroutine LocalK_prop_L(PropU, PropD, iseed, nt)
         ! 向左扫描时的传播：从 τ 到 τ-1
         ! 
-        ! 正确的逻辑（参考 CodeXun）：
-        ! 1. 先对所有键做 metro 更新（更新 G 和 σ）
-        ! 2. 然后对整个时间片做一次 wrap（mmult_L + mmult_R）
-        ! 3. 最后更新 UUL（mmult_L）
+        ! 正确的逻辑：
+        ! 1. 对所有 group 做 metro 更新（更新 G 和 σ）
+        ! 2. 然后对整个时间片做一次 wrap（使用棋盘分解的 mmult）
+        ! 3. 最后更新 UUL
         !
-        ! 注意：棋盘分解只用于 metro 更新中的 Sherman-Morrison 公式，
-        !       因为同组内的键不共享格点，它们的更新是可交换的。
-        !       但 wrap 操作必须对整个时间片做，不能分组做！
+        ! 棋盘分解用于 mmult_L/R 内部，确保 B = B_4 * B_3 * B_2 * B_1
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
-        integer :: ii
         
-        ! 步骤 1：对所有键做 metro 更新（暂时禁用以诊断问题）
-        ! 禁用 metro 更新，只测试传播
-        ! do ii = 2*Lq, 1, -1
-        !     call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
-        ! enddo
+        ! 步骤 1：对所有 group 做 metro 更新
+        ! 按 group_4 -> group_3 -> group_2 -> group_1 顺序
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt)
         
-        ! 步骤 2：对整个时间片做一次 wrap（不是 4 次！）
-        ! 参考 CodeXun：G' = G * B，然后 G'' = B^{-1} * G'
+        ! 步骤 2：对整个时间片做一次 wrap
+        ! G(τ-1) = B(τ)^{-1} * G(τ) * B(τ)
+        ! 先 G' = G * B，然后 G'' = B^{-1} * G'
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
         call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
         
         ! 步骤 3：更新 UUL
-        ! 问题诊断：检查 UUL 更新是否正确
-        ! 在 sweep_L 中，从 nt=Ltrot 到 nt=1：
-        !   初始 UUL = I
-        !   nt=Ltrot 后：UUL = I * B(Ltrot) = B(Ltrot)
-        !   nt=Ltrot-1 后：UUL = B(Ltrot) * B(Ltrot-1)
-        !   ...
-        ! 这表示从当前时间片到 τ=Ltrot 的传播子乘积
+        ! UUL 累积从当前时间片到 τ=Ltrot 的传播子
         call Op_K%mmult_L(PropU%UUL, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropD%UUL, Latt, NsigL_K%sigma, nt, 1)
         
@@ -554,25 +547,28 @@ contains
     subroutine LocalK_prop_R(PropU, PropD, iseed, nt)
         ! 向右扫描时的传播：从 τ-1 到 τ
         ! 
-        ! 正确的逻辑（参考 CodeXun）：
-        ! 1. 先对整个时间片做一次 wrap（mmult_R + mmult_L）
-        ! 2. 然后对所有键做 metro 更新（更新 G 和 σ）
-        ! 3. 最后更新 UUR（mmult_R）
+        ! 正确的逻辑：
+        ! 1. 先对整个时间片做一次 wrap（使用棋盘分解的 mmult）
+        ! 2. 然后对所有 group 做 metro 更新
+        ! 3. 最后更新 UUR
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
-        integer :: ii
         
-        ! 步骤 1：对整个时间片做一次 wrap（不是 4 次！）
+        ! 步骤 1：对整个时间片做一次 wrap
+        ! G(τ) = B(τ) * G(τ-1) * B(τ)^{-1}
+        ! 先 G' = B * G，然后 G'' = G' * B^{-1}
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
         
-        ! 步骤 2：对所有键做 metro 更新（暂时禁用以诊断问题）
-        ! do ii = 1, 2*Lq
-        !     call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
-        ! enddo
+        ! 步骤 2：对所有 group 做 metro 更新
+        ! 按 group_1 -> group_2 -> group_3 -> group_4 顺序
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt)
         
         ! 步骤 3：更新 UUR
         call Op_K%mmult_R(PropU%UUR, Latt, NsigL_K%sigma, nt, 1)
