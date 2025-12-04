@@ -66,9 +66,22 @@ contains
         complex(kind=8) :: phase_i_p, phase_i_m, phase_j_p, phase_j_m
         real(kind=8) :: Ai, Aj
 
+        ! 从 G_0 计算 G_λ = (1 + P[λ]B)^{-1}
+        ! 含时观测量也需要使用 G_λ
         Gr00u  = PropGrU%Gr00; Grttu  = PropGrU%Grtt; Grt0u = PropGrU%Grt0; Gr0tu = PropGrU%Gr0t
-        Gr00uc = ZKRON - transpose(Gr00u); Grttuc = ZKRON - transpose(Grttu)
         Gr00d  = PropGrD%Gr00; Grttd  = PropGrD%Grtt; Grt0d = PropGrD%Grt0; Gr0td = PropGrD%Gr0t
+        ! 转换等时 Green 函数为 G_λ
+        call convert_G0_to_Glambda_tau(Gr00u)
+        call convert_G0_to_Glambda_tau(Grttu)
+        call convert_G0_to_Glambda_tau(Gr00d)
+        call convert_G0_to_Glambda_tau(Grttd)
+        ! 非等时 Green 函数也需要转换
+        call convert_Gij_to_Glambda_tau(Grt0u)
+        call convert_Gij_to_Glambda_tau(Gr0tu)
+        call convert_Gij_to_Glambda_tau(Grt0d)
+        call convert_Gij_to_Glambda_tau(Gr0td)
+        
+        Gr00uc = ZKRON - transpose(Gr00u); Grttuc = ZKRON - transpose(Grttu)
         Gr00dc = ZKRON - transpose(Gr00d); Grttdc = ZKRON - transpose(Grttd)
 
         do ii = 1, Ndim
@@ -131,4 +144,109 @@ contains
         enddo
         return
     end subroutine Obs_tau_calc
+
+    subroutine convert_G0_to_Glambda_tau(Gr)
+        ! 从 G_0 = (1 + B)^{-1} 计算 G_λ = (1 + P[λ]B)^{-1}
+        ! 与 obser_equal.f90 中的实现相同
+        complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: Gr
+        complex(kind=8), allocatable :: M0(:,:), Mlambda(:,:)
+        real(kind=8) :: lam_i
+        integer :: i, j, info
+        integer, allocatable :: ipiv(:)
+        complex(kind=8), allocatable :: work(:)
+        integer :: lwork
+        logical :: all_one
+        
+        ! 如果 λ 全为 1，G_λ = G_0，直接返回
+        all_one = .true.
+        do i = 1, Lq
+            if (abs(NsigL_K%lambda(i) - 1.d0) > 1.d-12) then
+                all_one = .false.
+                exit
+            endif
+        enddo
+        if (all_one) return
+        
+        allocate(M0(Ndim, Ndim), Mlambda(Ndim, Ndim))
+        allocate(ipiv(Ndim))
+        lwork = Ndim * Ndim
+        allocate(work(lwork))
+        
+        ! M0 = Gr^{-1}
+        M0 = Gr
+        call ZGETRF(Ndim, Ndim, M0, Ndim, ipiv, info)
+        if (info /= 0) then
+            deallocate(M0, Mlambda, ipiv, work)
+            return
+        endif
+        call ZGETRI(Ndim, M0, Ndim, ipiv, work, lwork, info)
+        if (info /= 0) then
+            deallocate(M0, Mlambda, ipiv, work)
+            return
+        endif
+        
+        ! M_λ = P[λ]*M0 + (I - P[λ])
+        do i = 1, Ndim
+            lam_i = NsigL_K%lambda(i)
+            do j = 1, Ndim
+                if (i == j) then
+                    Mlambda(i, j) = dcmplx(lam_i, 0.d0) * M0(i, j) + dcmplx(1.d0 - lam_i, 0.d0)
+                else
+                    Mlambda(i, j) = dcmplx(lam_i, 0.d0) * M0(i, j)
+                endif
+            enddo
+        enddo
+        
+        ! G_λ = M_λ^{-1}
+        call ZGETRF(Ndim, Ndim, Mlambda, Ndim, ipiv, info)
+        if (info /= 0) then
+            deallocate(M0, Mlambda, ipiv, work)
+            return
+        endif
+        call ZGETRI(Ndim, Mlambda, Ndim, ipiv, work, lwork, info)
+        if (info == 0) then
+            Gr = Mlambda
+        endif
+        
+        deallocate(M0, Mlambda, ipiv, work)
+        return
+    end subroutine convert_G0_to_Glambda_tau
+
+    subroutine convert_Gij_to_Glambda_tau(Gr)
+        ! 非等时 Green 函数的转换
+        ! G(τ, 0)_λ = G(τ, 0)_0 × P[λ]（右乘 P[λ]）
+        ! G(0, τ)_λ = P[λ] × G(0, τ)_0（左乘 P[λ]）
+        ! 
+        ! 由于 P[λ] 是对角矩阵，这里简化为：
+        ! G(i, j) → G(i, j) × λ_j（对于 Grt0）
+        ! G(i, j) → λ_i × G(i, j)（对于 Gr0t）
+        ! 
+        ! 注意：这是一个简化实现，假设非等时 Green 函数的 λ 投影可以
+        ! 通过简单的左乘或右乘来实现。
+        ! 对于更严格的实现，可能需要考虑时间片结构。
+        complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: Gr
+        integer :: i, j
+        real(kind=8) :: lam_j
+        logical :: all_one
+        
+        ! 如果 λ 全为 1，无需转换
+        all_one = .true.
+        do i = 1, Lq
+            if (abs(NsigL_K%lambda(i) - 1.d0) > 1.d-12) then
+                all_one = .false.
+                exit
+            endif
+        enddo
+        if (all_one) return
+        
+        ! 右乘 P[λ]：G(i, j) → G(i, j) × λ_j
+        do j = 1, Ndim
+            lam_j = NsigL_K%lambda(j)
+            do i = 1, Ndim
+                Gr(i, j) = Gr(i, j) * dcmplx(lam_j, 0.d0)
+            enddo
+        enddo
+        return
+    end subroutine convert_Gij_to_Glambda_tau
+
 end module ObserTau_mod

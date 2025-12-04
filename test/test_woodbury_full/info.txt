@@ -17,11 +17,3 @@
  来回扫的更新次数 Nsweep        :           5
  # No. of MPI processes       :           1
  ==============================================
- Skipping Bosonic warm-up
- Average size of Wolff cluster                  :   19.639999999999997     
- Accept_Kglobal                                 :  0.84000000000000008     
- Accept_Klocal_shift                            :  0.15058333333333335     
- Accept_lambda_local                            :  0.59999999999999998     
- Max diff Matrix                                :   3.7171676327274472E-013
- Mean diff Matrix                               :                       NaN
- Tot CPU time                                   :   2.9813472310000000     
