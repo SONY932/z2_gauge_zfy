@@ -120,6 +120,9 @@ contains
     end subroutine stab_UL
     
     subroutine stab_green(Gr, Prop, nt)
+! Calculates the Green's function from the UDV decomposition of UUL and UUR
+! B = UL DL VL VR DR UR = UL DL (VL VR) DR UR
+! G = (1+B)^-1
 ! Arguments: 
         complex(kind=8), dimension(Ndim, Ndim), intent(out) :: Gr
         class(Propagator), intent(in) :: Prop
@@ -190,6 +193,78 @@ contains
         deallocate(WORK)
         return
     end subroutine stab_green
+    
+    subroutine stab_green_lambda(Gr, Prop, nt)
+! Calculates G_lambda = (1 + P[lambda] * B)^{-1}
+! 其中 P[lambda] = diag(lambda_i)，lambda_i = ±1
+! 实现方法：用 P[lambda] * UL 代替 UL，即把 UL 的每一行乘以对应的 lambda
+! 由于 P[lambda] 是对角矩阵（条件数 = 1），这不会影响数值稳定性
+! Arguments: 
+        complex(kind=8), dimension(Ndim, Ndim), intent(out) :: Gr
+        class(Propagator), intent(in) :: Prop
+        integer, intent(in) :: nt
+! Local: 
+        complex(kind=8), dimension(Ndim, Ndim) :: VRVL, invULUR, UUL_lambda
+        complex(kind=8), dimension(:), allocatable :: WORK
+        complex(kind=kind(0.d0)) :: Z
+        integer :: nl, nr, Lwork, info, ii
+
+! 创建 UUL 的副本并应用 P[lambda]
+! UL_lambda = P[lambda] * UL，即把每一行乘以对应的 lambda
+        UUL_lambda = Prop%UUL
+        do ii = 1, Ndim
+            UUL_lambda(ii, :) = UUL_lambda(ii, :) * NsigL_K%lambda(ii)
+        enddo
+
+! VRVL = VR*VL
+        call mmult(VRVL, Prop%VUR, Prop%VUL)
+! invULUR = UR^dagger (P*UL)^dagger = (P*UL*UR)^-1
+! 由于 P 是实对角矩阵，(P*UL)^dagger = UL^dagger * P
+        call ZGEMM('C', 'C', Ndim, Ndim, Ndim, Z_one, Prop%UUR, Ndim, UUL_lambda, Ndim, dcmplx(0.d0, 0.d0), invULUR, Ndim)
+! compute: matUDV = (P*UL*UR)^-1 + DR VR VL DL
+        temp = dcmplx(0.d0, 0.d0)
+        do nr = 1, Ndim
+            call zaxpy(Ndim, Prop%DUL(nr), VRVL(1, nr), 1, temp(1, nr), 1)
+        enddo
+        VRVL = dcmplx(0.d0, 0.d0)
+        do nl = 1, Ndim
+            call zaxpy(Ndim, Prop%DUR(nl), temp(nl, 1), Ndim, VRVL(nl, 1), Ndim)
+        enddo
+        matUDV = invULUR + VRVL
+! if ntau >Ltrot/2, decompose matUDV^dagger
+        if (nt > Ltrot/2) matUDV = dconjg(transpose(matUDV))
+! matUDV * P  = U D V
+        IPVT = 0
+        call QDRP_decompose(matUDV, DUP, IPVT, TAU, WORK, Lwork)
+        if (nt < Ltrot/2 + 1) then
+! G_lambda = (P*UL)^dagger * P * V^-1 * D^-1 * U^dagger * UR^dagger
+            temp = dconjg(transpose(Prop%UUR))
+            call ZUNMQR('L', 'C', Ndim, Ndim, Ndim, matUDV(1,1), Ndim, TAU(1), temp(1,1), Ndim, WORK(1), Lwork, info)
+            do nl = 1, Ndim
+                temp(nl, :) = temp(nl, :) / DUP(nl)
+            enddo
+            call ZTRSM('L', 'U', 'N', 'N', Ndim, Ndim, Z_one, matUDV(1,1), Ndim, temp(1,1), Ndim)
+            call ZLAPMR(.false., Ndim, Ndim, temp(1,1), Ndim, IPVT(1))
+! 使用 UUL_lambda 代替 UUL
+            call ZGEMM('C', 'N', Ndim, Ndim, Ndim, Z_one, UUL_lambda(1,1), Ndim, temp(1,1), Ndim, dcmplx(0.d0, 0.d0), Gr(1,1), Ndim)
+        elseif(nt > Ltrot/2) then
+! G_lambda = (P*UL)^dagger * U * D^-1 * V * P^-1 * UR^dagger
+! 使用 UUL_lambda 代替 UUL
+            temp = dconjg(transpose(UUL_lambda))
+            call ZUNMQR('R', 'N', Ndim, Ndim, Ndim, matUDV(1, 1), Ndim, TAU(1), temp(1, 1), Ndim, WORK(1), Lwork, info)
+            do nr = 1, Ndim
+                temp(:, nr) = temp(:, nr)/ DUP(nr)
+            enddo
+            call ZTRSM('R', 'U', 'C', 'N', Ndim, Ndim, Z_one, matUDV(1, 1), Ndim, temp(1, 1), Ndim)
+            call ZLAPMT(.false., Ndim, Ndim, temp(1, 1), Ndim, IPVT(1))
+            call ZGEMM('N', 'C', Ndim, Ndim, Ndim, Z_one, temp(1, 1), Ndim, Prop%UUR(1, 1), Ndim, dcmplx(0.d0, 0.d0), Gr(1, 1), Ndim)
+        else
+            write(6,*) "illegal imaginary input in stabgreen_lambda, nt =", nt
+        endif
+
+        deallocate(WORK)
+        return
+    end subroutine stab_green_lambda
         
     subroutine stab_green_big(Prop)
 ! Arguments:
@@ -384,7 +459,8 @@ contains
         WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR(1:Ndim, 1:Ndim)
         WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
         if (nt == Ltrot) then
-            ! 计算 G = (1 + B_tot)^{-1}
+            ! 计算 G_0 = (1 + B_tot)^{-1}
+            ! 注意：暂时不应用 P[λ]，因为传播逻辑需要与稳定化一致
             Gr = dcmplx(0.d0, 0.d0)
             call stab_green(Gr, Prop, nt)
             Prop%Gr = Gr
@@ -417,7 +493,7 @@ contains
         endif
         if (nt .ne. Ltrot) then
             call stab_UL(Prop)
-            ! 计算 G = (1 + B_tot)^{-1}
+            ! 计算 G_0 = (1 + B_tot)^{-1}
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
@@ -456,7 +532,7 @@ contains
         endif
         if (nt .ne. 0) then
             call stab_UR(Prop)
-            ! 计算 G = (1 + B_tot)^{-1}
+            ! 计算 G_0 = (1 + B_tot)^{-1}
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif

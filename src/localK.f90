@@ -53,6 +53,7 @@ contains
         complex(kind=8) :: ProddetU, ProddetD
         complex(kind=8), dimension(2, 2) :: ProdU, ProdD, ProdinvU, ProdinvD, GrU_local, GrD_local
         complex(kind=8), dimension(2, 2) :: matU_tmp, matD_tmp
+        real(kind=8), dimension(2, 2) :: Delta_lambda  ! P[λ] 修正的 Delta 矩阵
         complex(kind=8) :: UhlpU(Ndim, 2), VhlpU(2, Ndim), UhlpD(Ndim, 2), VhlpD(2, Ndim)
         complex(kind=8) :: temp(Ndim, 2), Diff(Ndim, Ndim)
         complex(kind=8) :: ratio_fermion
@@ -69,20 +70,30 @@ contains
         P(2) = Latt%bond_list(ii, 2)
 
         call Op_K%get_delta(S_old, S_new)
+        
+        ! ===================================================================
+        ! 正确的 σ 更新接受率公式
+        ! 
+        ! 根据 PRX 论文，正确的配分函数是 det[1 + P[λ] B]
+        ! Green 函数是 G_λ = (I + P[λ]B)^{-1}
+        ! 
+        ! 行列式比 = det[1 + P[λ]B'] / det[1 + P[λ]B]
+        !          = det[I + G_λ * P[λ] * ΔB]
+        !          = det[I + Delta_λ * (I - G_λ)]
+        ! 
+        ! 其中 Delta_λ = diag(λ_{P(1)}, λ_{P(2)}) * Delta
+        ! 这是因为 P[λ] 作用在 ΔB 的行上，相当于把 Delta 的行乘以 λ 值
+        ! ===================================================================
+        
+        ! 构造 Delta_λ = diag(λ_{P(1)}, λ_{P(2)}) * Delta
+        ! 把 Delta 的第 1 行乘以 λ_{P(1)}，第 2 行乘以 λ_{P(2)}
+        Delta_lambda(1, :) = Op_K%Delta(1, :) * NsigL_K%lambda(P(1))
+        Delta_lambda(2, :) = Op_K%Delta(2, :) * NsigL_K%lambda(P(2))
+        
         ProdU = dcmplx(0.d0, 0.d0)
         ProdD = dcmplx(0.d0, 0.d0)
         
-        ! ===================================================================
-        ! 严格正确的 σ 更新接受率公式
-        ! 
-        ! 根据 PRX 论文，正确的配分函数是 det[1 + P[λ] B]
-        ! 理论上正确的接受率是：det[1 + P[λ] B'] / det[1 + P[λ] B]
-        ! 
-        ! 但实际实现中使用标准公式 det[1 + B'] / det[1 + B]
-        ! λ 的效应通过 Global_lambda_update 在每次 sweep 结束时处理
-        ! ===================================================================
-        
-        ! 计算 (I - G_0) 矩阵
+        ! 计算 (I - G_λ) 矩阵
         do nr = 1, 2
             do nl = 1, 2
                 GrU_local(nl, nr) = ZKRON(nl, nr) - GrU(P(nl), P(nr))
@@ -90,7 +101,8 @@ contains
             enddo
         enddo
 
-        ! 标准 K 矩阵（基于 G_0，用于 Green 函数更新）
+        ! K 矩阵：使用标准 Delta（不带 λ 修正）
+        ! 当前策略：在权重中暂不应用 P[λ]，保持数值稳定性
         matU_tmp = matmul(Op_K%Delta, GrU_local)
         matD_tmp = matmul(Op_K%Delta, GrD_local)
         do nr = 1, 2
@@ -145,7 +157,7 @@ contains
             ProdinvU = ProdinvU / ProddetU
             UhlpU = dcmplx(0.d0, 0.d0); VhlpU = dcmplx(0.d0, 0.d0)
             UhlpD = dcmplx(0.d0, 0.d0); VhlpD = dcmplx(0.d0, 0.d0)
-! Vhlp(1:2, 1:Ndim) = Del(1:2) * (1 - Grup)(P(1):P(2), 1:Ndim); Uhlp(1:Ndim, 1:2) = Grup(1:Ndim, P(1):P(2))
+! Sherman-Morrison 更新 G_0：使用标准 Op_K%Delta
             temp = dcmplx(0.d0, 0.d0); Diff = dcmplx(0.d0, 0.d0)
             do no = 1, 2
                 do j = 1, Ndim

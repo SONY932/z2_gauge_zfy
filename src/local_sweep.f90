@@ -169,9 +169,9 @@ contains
                 call this%sweep_R(PropU, PropD, WrU, WrD, iseed, toggle, Nobs, Nobst)
                 call this%sweep_L(PropU, PropD, WrU, WrD, iseed, Nobs)
             endif
-            ! λ 更新：在每次 sweep 结束时进行
-            call Global_lambda_update(PropU%Gr, PropD%Gr, iseed, n_lambda_accept, n_lambda_total)
-            call update_lambda_acc(n_lambda_accept, n_lambda_total)
+! λ 更新：暂时禁用以调试
+        ! call Global_lambda_update(PropU%Gr, PropD%Gr, iseed, n_lambda_accept, n_lambda_total)
+        ! call update_lambda_acc(n_lambda_accept, n_lambda_total)
         enddo
         call Obs_equal%ave(Nobs)
         if (toggle) call Obs_tau%ave(Nobst)

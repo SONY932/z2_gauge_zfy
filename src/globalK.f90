@@ -197,17 +197,22 @@ contains
                 cycle
             endif
             
+            ! ===================================================================
             ! 费米子行列式比
-            ! 对于 G_0 = (I + B)^{-1}，翻转 λ_i 的行列式比取决于当前 λ_i 的值
-            ! 当 λ_i = +1 时（翻转到 -1）：ratio = |2G_{ii} - 1|
-            ! 当 λ_i = -1 时（翻转到 +1）：ratio = |3 - 2G_{ii}|
-            if (NsigL_K%lambda(ii) > 0.d0) then
-                ratio_fermion_U = abs(2.d0 * Gii_U - 1.d0)
-                ratio_fermion_D = abs(2.d0 * Gii_D - 1.d0)
-            else
-                ratio_fermion_U = abs(3.d0 - 2.d0 * Gii_U)
-                ratio_fermion_D = abs(3.d0 - 2.d0 * Gii_D)
-            endif
+            ! 
+            ! 对于 G_λ = (I + P[λ]B)^{-1}，翻转 λ_i 的行列式比为：
+            ! det[I + P'B] / det[I + PB] = |2G_λ(i, i) - 1|
+            ! 
+            ! 推导：设 P' - P = Δ = -2λ_i * E_{ii}
+            ! 使用 Sherman-Morrison：det[I + P'B] = det[I + PB + ΔB]
+            !                      = det[I + PB] * (1 + v^T G_λ u)
+            ! 其中 u = -2λ_i * e_i, v = B^T * e_i
+            ! v^T G_λ u = -2λ_i * (BG_λ)_{ii} = -2λ_i * λ_i * (1 - G_λ(i,i))
+            !          = -2(1 - G_λ(i,i)) = 2G_λ(i,i) - 2
+            ! 所以 1 + v^T G_λ u = 2G_λ(i,i) - 1
+            ! ===================================================================
+            ratio_fermion_U = abs(2.d0 * Gii_U - 1.d0)
+            ratio_fermion_D = abs(2.d0 * Gii_D - 1.d0)
             
             ! 玻色权重比
             ratio_boson = gauss_boson_ratio_lambda(ii, NsigL_K%sigma, NsigL_K%lambda, Latt)
@@ -219,10 +224,11 @@ contains
             if (abs(ratio_total) > random) then
                 n_accept = n_accept + 1
                 
-                ! 注意：不更新 Green 函数
-                ! Green 函数保持为 G = (I + B)^{-1}，不依赖于 λ
-                ! λ 的效应只体现在行列式比（接受率）中
-                ! 这样可以保证稳定化检查时 Green 函数的一致性
+                ! 更新 Green 函数：G = (I + P[λ]B)^{-1}
+                ! 当 λ_i 翻转时，P[λ] 的第 i 个对角元素从 λ_i 变成 -λ_i
+                ! 使用 Sherman-Morrison 公式更新
+                call lambda_update_Green(GrU, ii)
+                call lambda_update_Green(GrD, ii)
                 
                 ! 翻转 λ
                 NsigL_K%lambda(ii) = -NsigL_K%lambda(ii)
@@ -231,22 +237,26 @@ contains
         return
     contains
         subroutine lambda_update_Green(Gr, i)
+            ! ===================================================================
             ! 更新 Green 函数（rank-1 Sherman-Morrison）
-            ! 当 λ_i = +1 时（翻转到 -1）：G' = G + 2 G[:, i] (I-G)[i, :] / (2G_{ii} - 1)
-            ! 当 λ_i = -1 时（翻转到 +1）：G' = G - 2 G[:, i] (I-G)[i, :] / (3 - 2G_{ii})
+            ! 
+            ! 对于 G_λ = (I + P[λ]B)^{-1}，翻转 λ_i 后的更新公式为：
+            ! G' = G_λ + 2 * G_λ[:, i] * (I - G_λ)[i, :] / (2G_λ(i,i) - 1)
+            ! 
+            ! 推导：使用 Sherman-Morrison 公式
+            ! G' = G - G u (1 + v^T G u)^{-1} v^T G
+            ! 其中 u = -2λ_i * e_i, v^T = (B 的第 i 行)
+            ! 由于 BG_λ = P(I - G_λ)，有 v^T G = λ_i(I - G_λ)[i,:]
+            ! 代入得 G' = G + 2λ_i G[:, i] * λ_i(I - G)[i,:] / (2G(i,i) - 1)
+            !         = G + 2 G[:, i] * (I - G)[i,:] / (2G(i,i) - 1)
+            ! ===================================================================
             complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: Gr
             integer, intent(in) :: i
-            complex(kind=8) :: denom, factor
+            complex(kind=8) :: denom
             complex(kind=8), dimension(Ndim) :: col_i, row_i
             integer :: kk, ll
             
-            if (NsigL_K%lambda(i) > 0.d0) then
-                denom = 2.d0 * Gr(i, i) - dcmplx(1.d0, 0.d0)
-                factor = dcmplx(2.d0, 0.d0)
-            else
-                denom = dcmplx(3.d0, 0.d0) - 2.d0 * Gr(i, i)
-                factor = dcmplx(-2.d0, 0.d0)
-            endif
+            denom = 2.d0 * Gr(i, i) - dcmplx(1.d0, 0.d0)
             
             if (abs(denom) < 1.d-300) return
             
@@ -261,10 +271,10 @@ contains
                 endif
             enddo
             
-            ! G' = G + factor * col_i ⊗ row_i / denom
+            ! G' = G + 2 * col_i ⊗ row_i / denom
             do kk = 1, Ndim
                 do ll = 1, Ndim
-                    Gr(kk, ll) = Gr(kk, ll) + factor * col_i(kk) * row_i(ll) / denom
+                    Gr(kk, ll) = Gr(kk, ll) + 2.d0 * col_i(kk) * row_i(ll) / denom
                 enddo
             enddo
         end subroutine lambda_update_Green
