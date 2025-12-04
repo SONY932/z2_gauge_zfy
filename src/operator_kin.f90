@@ -16,6 +16,8 @@ module OperatorKin_mod
         procedure :: get_delta => opK_get_delta
         procedure :: mmult_R => opK_mmult_R
         procedure :: mmult_L => opK_mmult_L
+        procedure :: mmult_R_group => opK_mmult_R_group
+        procedure :: mmult_L_group => opK_mmult_L_group
     end type OperatorKin
 
 contains
@@ -60,39 +62,35 @@ contains
 
     subroutine opK_mmult_R(this, Mat, Latt, sigma, ntau, nflag)
 ! In Mat Out U(NF) * EXP(D(NF)) * Mat
-! 直接按顺序处理所有键（无棋盘分解）
-! 这与 LocalK_metro 中的 Green 函数更新一致
+! 使用棋盘分解：按组处理，每组内的键不共享格点
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
         class(SquareLattice), intent(in) :: Latt
         real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: ntau, nflag
-! Local:
-        integer :: ii, P(2), jj
-        real(kind = 8) :: vec
-        complex(kind=8), dimension(2, Ndim) :: Vhlp
 
-        ! 按顺序处理所有键
-        do ii = 1, 2*Lq
-            vec = sigma(ii, ntau)
-            call this%get_exp(vec, nflag)
-            P(1) = Latt%bond_list(ii, 1)
-            P(2) = Latt%bond_list(ii, 2)
-            
-            ! Apply 2x2 Givens rotation: [C S; S C] to rows P(1) and P(2)
-            do jj = 1, Ndim
-                Vhlp(1, jj) = this%entryC * Mat(P(1), jj) + this%entryS * Mat(P(2), jj)
-                Vhlp(2, jj) = this%entryS * Mat(P(1), jj) + this%entryC * Mat(P(2), jj)
-            enddo
-            do jj = 1, Ndim
-                Mat(P(1), jj) = Vhlp(1, jj)
-                Mat(P(2), jj) = Vhlp(2, jj)
-            enddo
-        enddo
+        ! 按组处理：组内键不共享格点，B 矩阵互相对易
+        call process_group(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
+        call process_group(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
+        call process_group(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
+        call process_group(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
 
         return
     end subroutine opK_mmult_R
+    
+    ! 按组进行右乘（用于 LocalK_prop_R 中的分组更新）
+    subroutine opK_mmult_R_group(this, Mat, group, Latt, sigma, ntau, nflag)
+        class(OperatorKin), intent(inout) :: this
+        complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
+        integer, dimension(:), intent(in) :: group
+        class(SquareLattice), intent(in) :: Latt
+        real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
+        integer, intent(in) :: ntau, nflag
+
+        call process_group(this, Mat, group, Latt, sigma, ntau, nflag)
+        return
+    end subroutine opK_mmult_R_group
 
     subroutine process_group(this, Mat, group, Latt, sigma, ntau, nflag)
 ! Helper subroutine to process one checkerboard group
@@ -130,39 +128,36 @@ contains
 
     subroutine opK_mmult_L(this, Mat, Latt, sigma, ntau, nflag)
 ! In Mat Out Mat * EXP(D(NF)) * UT(NF)
-! 直接按相反顺序处理所有键（无棋盘分解）
-! 左乘需要按相反顺序以保持一致性
+! 使用棋盘分解：按逆序组处理（与右乘相反）
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
         class(SquareLattice), intent(in) :: Latt
         real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: ntau, nflag
-! Local:
-        integer :: ii, P(2), jj
-        real(kind = 8) :: vec
-        complex(kind=8), dimension(Ndim, 2) :: Uhlp
 
-        ! 按相反顺序处理所有键
-        do ii = 2*Lq, 1, -1
-            vec = sigma(ii, ntau)
-            call this%get_exp(vec, nflag)
-            P(1) = Latt%bond_list(ii, 1)
-            P(2) = Latt%bond_list(ii, 2)
-            
-            ! Apply 2x2 Givens rotation: [C S; S C] to columns P(1) and P(2)
-            do jj = 1, Ndim
-                Uhlp(jj, 1) = Mat(jj, P(1)) * this%entryC + Mat(jj, P(2)) * this%entryS
-                Uhlp(jj, 2) = Mat(jj, P(1)) * this%entryS + Mat(jj, P(2)) * this%entryC
-            enddo
-            do jj = 1, Ndim
-                Mat(jj, P(1)) = Uhlp(jj, 1)
-                Mat(jj, P(2)) = Uhlp(jj, 2)
-            enddo
-        enddo
+        ! 按逆序组处理：组内键不共享格点，B 矩阵互相对易
+        ! B = B1*B2*B3*B4，所以 B^{-1} = B4^{-1}*B3^{-1}*B2^{-1}*B1^{-1}
+        call process_group_L(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
+        call process_group_L(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
+        call process_group_L(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
+        call process_group_L(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
 
         return
     end subroutine opK_mmult_L
+    
+    ! 按组进行左乘（用于 LocalK_prop_L 中的分组更新）
+    subroutine opK_mmult_L_group(this, Mat, group, Latt, sigma, ntau, nflag)
+        class(OperatorKin), intent(inout) :: this
+        complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
+        integer, dimension(:), intent(in) :: group
+        class(SquareLattice), intent(in) :: Latt
+        real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
+        integer, intent(in) :: ntau, nflag
+
+        call process_group_L(this, Mat, group, Latt, sigma, ntau, nflag)
+        return
+    end subroutine opK_mmult_L_group
 
     subroutine process_group_L(this, Mat, group, Latt, sigma, ntau, nflag)
 ! Helper subroutine to process one checkerboard group (left multiplication)
