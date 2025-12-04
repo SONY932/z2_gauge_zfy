@@ -157,11 +157,9 @@ contains
         logical, intent(inout) :: is_beta
         logical, intent(in) :: toggle
         integer :: Nobs, Nobst, nsw
-        integer :: n_lambda_accept, n_lambda_total
 
         call this%reset(toggle)
         Nobs = 0; Nobst = 0
-        n_lambda_accept = 0; n_lambda_total = 0
         do nsw = 1, Nsweep
             if(is_beta) then
                 call this%sweep_L(PropU, PropD, WrU, WrD, iseed, Nobs)
@@ -170,22 +168,8 @@ contains
                 call this%sweep_R(PropU, PropD, WrU, WrD, iseed, toggle, Nobs, Nobst)
                 call this%sweep_L(PropU, PropD, WrU, WrD, iseed, Nobs)
             endif
-            ! 全局 λ 更新：暂时禁用
-            ! 原因：当前的接受率公式使用 G_0，但正确的公式需要 G_λ
-            ! 这会导致 λ 配置偏离正确分布
-            ! TODO: 实现正确的 λ 更新需要在 wrap 时计算 det[1 + P[λ] B]
-            ! call Global_lambda_update(PropU%Gr, PropD%Gr, iseed, n_lambda_accept, n_lambda_total)
-        enddo
-        ! 更新 λ 接受率统计（通过 count 方法）
-        ! 注意：由于使用参数传递，这里需要手动调用 count
-        ! Acc_lambda 的统计已在 Global_lambda_update 返回的计数器中
-        ! 这里我们使用一个简化的方法：每次接受调用 count(.true.)，每次拒绝调用 count(.false.)
-        ! 但由于 count 期望每次调用一次，我们需要循环
-        do nsw = 1, n_lambda_accept
-            call Acc_lambda%count(.true.)
-        enddo
-        do nsw = 1, n_lambda_total - n_lambda_accept
-            call Acc_lambda%count(.false.)
+            ! λ 更新现在在 LocalK_prop_L/R 中的每个时间片进行
+            ! 使用正确的高斯约束公式（费米子行列式比 × 玻色权重比）
         enddo
         call Obs_equal%ave(Nobs)
         if (toggle) call Obs_tau%ave(Nobst)

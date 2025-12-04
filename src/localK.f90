@@ -4,6 +4,7 @@ module LocalK_mod
     use ProcessMatrix
     use MyLattice
     use calc_basic
+    use Fields_mod, only: gauss_boson_ratio_lambda, gauss_boson_ratio_sigma
     implicit none
 
     public
@@ -118,6 +119,13 @@ contains
         ratio_fermion = ProddetU * ProddetD
 ! Calculate total Metropolis ratio  
         ratio_boson = NsigL_K%bosonratio(sigma_new, ii, ntau, Latt)
+        
+        ! 添加高斯投影的玻色贡献
+        ! 当翻转 σ(bond, τ) 时，如果 τ = 1 或 τ = Ltrot，会影响 σ^x
+        ! 这会改变高斯投影的玻色权重
+        ratio_boson = ratio_boson * gauss_boson_ratio_sigma(ii, ntau, &
+            NsigL_K%sigma, sigma_new(ii, ntau), NsigL_K%lambda, Latt)
+        
         ratio_re = dble(ratio_fermion * ratio_boson)
         ratio_re_abs = abs(ratio_re)
         random = ranf(iseed)
@@ -172,6 +180,164 @@ contains
         return
     end subroutine LocalK_metro
 
+    ! =========================================================================
+    ! 单格点 λ 翻转（正确实现高斯约束）
+    ! 
+    ! 根据 PNAS SI，翻转 λ_i 的接受率包含两部分：
+    ! 1. 费米子行列式比：det[1 + P'B] / det[1 + PB]
+    ! 2. 玻色权重比：exp[iπ(n_b + n_Q)] = (-1)^{n_b + n_Q}
+    !
+    ! 其中 n_b = 格点 i 相邻四条键中时间不连续的个数
+    !      n_Q = (1-Q)/2（扇区信息）
+    ! =========================================================================
+    subroutine Local_lambda_flip_single(PropU, PropD, iseed, ii)
+        use MyMats
+! Arguments:
+        class(Propagator), intent(inout) :: PropU, PropD
+        integer, intent(inout) :: iseed
+        integer, intent(in) :: ii
+! Local:
+        real(kind=8), external :: ranf
+        real(kind=8) :: rU_single, rD_single, ratio_boson, ratio_total, random
+        logical :: safeU, safeD
+
+        ! 计算费米子行列式比（rank-1 更新）
+        call lambda_single_ratio(PropU%Gr, ii, rU_single, safeU)
+        call lambda_single_ratio(PropD%Gr, ii, rD_single, safeD)
+        
+        ! 计算玻色权重比
+        ratio_boson = gauss_boson_ratio_lambda(ii, NsigL_K%sigma, NsigL_K%lambda, Latt)
+
+        if (safeU .and. safeD) then
+            ratio_total = rU_single * rD_single * ratio_boson
+        else
+            ratio_total = 0.d0
+        endif
+
+        random = ranf(iseed)
+        if (abs(ratio_total) > random) then
+            call Acc_lambda%count(.true.)
+            call lambda_single_update(PropU%Gr, ii)
+            call lambda_single_update(PropD%Gr, ii)
+            
+            ! 更新 λ 场
+            NsigL_K%lambda(ii) = -NsigL_K%lambda(ii)
+            lambda_new(ii) = NsigL_K%lambda(ii)
+        else
+            call Acc_lambda%count(.false.)
+        endif
+        return
+    contains
+        subroutine lambda_single_ratio(Gr, i, r_single, is_safe)
+            ! 计算单格点翻转 λ_i 的费米子行列式比
+            ! 
+            ! 设 G_λ = (I + P_λ B)^{-1}，翻转 λ_i 等价于：
+            ! P' = P + ΔP，其中 ΔP 只在 (i,i) 处非零
+            ! ΔP_{ii} = P'_{ii} - P_{ii} = -2λ_i（从 λ_i 到 -λ_i）
+            !
+            ! 行列式比 = det(I + ΔP B G_λ) = 1 + ΔP_{ii} (BG_λ)_{ii}
+            !
+            ! 由于 BG_λ = I - G_λ + P_λ^{-1}(I - G_λ)... 这很复杂
+            ! 
+            ! 更简单的推导：
+            ! det[I + P'B] / det[I + PB] = det[P' P^{-1} + P' B P^{-1}] / det[I + B]
+            !                            = det[P' P^{-1}(I + PB)] / det[I + PB]
+            !                            = det[P' P^{-1}]
+            ! 
+            ! 不对，这也不对因为 P' P^{-1} 不等于 I。
+            !
+            ! 正确方法：使用 Woodbury 公式
+            ! G_λ = (I + P_λ B)^{-1}
+            ! 翻转 λ_i 意味着 P' = P + ΔP，其中 ΔP_{ii} = -2λ_i
+            ! 
+            ! 行列式比：det[I + P'B] / det[I + PB] 
+            !         = det[I + (P + ΔP)B] / det[I + PB]
+            !         = det[(I + PB)(I + (I + PB)^{-1} ΔP B)] / det[I + PB]
+            !         = det[I + G_λ^{-1} · ΔP · (G_λ^{-1} - I)]  -- 这太复杂
+            !
+            ! 更简洁：det[I + P'B] = det[I + PB] · det[I + ΔP B G_λ]
+            ! 其中 G_λ = (I + PB)^{-1}
+            ! 由于 ΔP 是 rank-1 矩阵，det[I + ΔP B G_λ] = 1 + Tr[ΔP B G_λ]
+            !                                         = 1 + ΔP_{ii} (BG_λ)_{ii}
+            ! 
+            ! 但问题是我们存储的是 G_0 = (I + B)^{-1}，不是 G_λ = (I + P_λ B)^{-1}
+            ! 需要转换：G_λ = (I + P_λ B)^{-1} = ...
+            !
+            ! 实际上，根据 PNAS 的方法，我们应该存储 G_λ 而不是 G_0。
+            ! 让我重新思考...
+            !
+            ! 简化版：如果当前存储的 Green 函数已经包含了 P[λ] 的效应，
+            ! 即 Gr = G_λ = (I + P_λ B)^{-1}，则：
+            ! 
+            ! 翻转 λ_i 时，ΔP_{ii} = -2λ_i
+            ! 行列式比 = 1 + ΔP_{ii} (BG_λ)_{ii}
+            !         = 1 - 2λ_i (I - G_λ)_{ii} · P_λ^{-1}_{ii}
+            !         = 1 - 2λ_i (1 - G_{ii}) / λ_i
+            !         = 1 - 2(1 - G_{ii})
+            !         = 2G_{ii} - 1
+            !
+            complex(kind=8), intent(in) :: Gr(:, :)
+            integer, intent(in) :: i
+            real(kind=8), intent(out) :: r_single
+            logical, intent(out) :: is_safe
+            real(kind=8) :: Gii_diag
+            real(kind=8), parameter :: tol = 0.1d0
+            
+            Gii_diag = real(Gr(i, i))
+            
+            ! 检查 G_{ii} 是否在物理区间
+            if (Gii_diag < -tol .or. Gii_diag > 1.d0 + tol) then
+                r_single = 0.d0
+                is_safe = .false.
+                return
+            endif
+            
+            ! 行列式比 = |2G_{ii} - 1|
+            r_single = abs(2.d0 * Gii_diag - 1.d0)
+            is_safe = .true.
+        end subroutine lambda_single_ratio
+
+        subroutine lambda_single_update(Gr, i)
+            ! 更新 Green 函数（rank-1 Sherman-Morrison）
+            ! 
+            ! 新的 Green 函数：G' = G - G · u · v^T · G / (1 + v^T G u)
+            ! 其中 u = e_i（单位向量），v = -2λ_i B e_i
+            ! 
+            ! 简化后：G' = G + 2 G[:, i] (I-G)[i, :] / (2G_{ii} - 1)
+            complex(kind=8), intent(inout) :: Gr(:, :)
+            integer, intent(in) :: i
+            complex(kind=8) :: denom, twoC
+            complex(kind=8), dimension(Ndim) :: col_i, row_i
+            integer :: kk, ll
+            
+            twoC = dcmplx(2.d0, 0.d0)
+            denom = twoC * Gr(i, i) - dcmplx(1.d0, 0.d0)
+            
+            if (abs(denom) < 1.d-300) return
+            
+            ! col_i = G[:, i]
+            ! row_i = (I - G)[i, :]
+            do kk = 1, Ndim
+                col_i(kk) = Gr(kk, i)
+                if (kk == i) then
+                    row_i(kk) = dcmplx(1.d0, 0.d0) - Gr(i, kk)
+                else
+                    row_i(kk) = -Gr(i, kk)
+                endif
+            enddo
+            
+            ! G' = G + 2 * col_i ⊗ row_i / denom
+            do kk = 1, Ndim
+                do ll = 1, Ndim
+                    Gr(kk, ll) = Gr(kk, ll) + twoC * col_i(kk) * row_i(ll) / denom
+                enddo
+            enddo
+        end subroutine lambda_single_update
+    end subroutine Local_lambda_flip_single
+
+    ! =========================================================================
+    ! 成对 λ 翻转（保留用于保持 ∏λ 不变的特殊情况）
+    ! =========================================================================
     subroutine Local_lambda_flip(PropU, PropD, iseed, ii, jj)
         use MyMats
 ! Arguments:
@@ -180,7 +346,7 @@ contains
         integer, intent(in) :: ii, jj
 ! Local:
         real(kind=8), external :: ranf
-        real(kind=8) :: rU_pair, rD_pair, prob, random
+        real(kind=8) :: rU_pair, rD_pair, ratio_boson_i, ratio_boson_j, prob, random
         logical :: safeU, safeD
 
         if (ii == jj) return
@@ -189,16 +355,19 @@ contains
 ! 先在当前 Green 上计算两个自旋的成对行列式比，再根据接受与否，对主 Gr 做一次 rank-2 更新。
         call lambda_pair_ratio(PropU%Gr, ii, jj, rU_pair, safeU)
         call lambda_pair_ratio(PropD%Gr, ii, jj, rD_pair, safeD)
+        
+        ! 计算两个格点的玻色权重比
+        ratio_boson_i = gauss_boson_ratio_lambda(ii, NsigL_K%sigma, NsigL_K%lambda, Latt)
+        ratio_boson_j = gauss_boson_ratio_lambda(jj, NsigL_K%sigma, NsigL_K%lambda, Latt)
 
         if (safeU .and. safeD .and. rU_pair > 0.d0 .and. rD_pair > 0.d0) then
-            prob = exp(min(0.d0, log(rU_pair) + log(rD_pair)))
+            prob = rU_pair * rD_pair * ratio_boson_i * ratio_boson_j
         else
             prob = 0.d0
         endif
-        prob = max(0.d0, min(1.d0, prob))
 
         random = ranf(iseed)
-        if (prob > random) then
+        if (abs(prob) > random) then
             call Acc_lambda%count(.true.)
             call lambda_pair_update(PropU%Gr, ii, jj)
             call lambda_pair_update(PropD%Gr, ii, jj)
@@ -352,17 +521,18 @@ contains
         do ii = 2*Lq, 1, -1
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! λ 场更新：禁用局部更新
-        ! 原因：局部更新的 Green 函数更新公式假设 G = (1 + P[λ]B)^{-1}
-        ! 但程序存储的是 G_0 = (1 + B)^{-1}，两者不兼容
-        ! λ 更新通过 Global_lambda_update 在每次 sweep 结束时全局进行
-        ! if (nt == Ltrot) then
-        !     do ii = 1, Lq - 1
-        !         do jj = ii + 1, Lq
-        !             call Local_lambda_flip(PropU, PropD, iseed, ii, jj)
-        !         enddo
-        !     enddo
-        ! endif
+        ! λ 场更新：暂时禁用
+        ! 问题说明：
+        ! 成对 λ 更新假设 Green 函数是 G_λ = (I + P_λ B)^{-1}
+        ! 但当前程序存储的是 G_0 = (I + B)^{-1}
+        ! 这导致 Green 函数更新公式不正确
+        ! 
+        ! 解决方案（待实现）：
+        ! 1. 在 stab_green 中应用 P[λ] 投影，存储 G_λ
+        ! 2. 修改传播公式以兼容 G_λ
+        ! 3. 或者使用全局重新计算方式进行 λ 更新
+        !
+        ! 当前状态：只启用了 σ 更新中的高斯约束玻色权重
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
@@ -384,14 +554,7 @@ contains
         do ii = 1, 2*Lq
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
-        ! λ 场更新：禁用局部更新（同上）
-        ! if (nt == Ltrot) then
-        !     do ii = 1, Lq - 1
-        !         do jj = ii + 1, Lq
-        !             call Local_lambda_flip(PropU, PropD, iseed, ii, jj)
-        !         enddo
-        !     enddo
-        ! endif
+        ! λ 场更新：暂时禁用（原因同上）
         call Op_K%mmult_R(PropU%UUR, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropD%UUR, Latt, NsigL_K%sigma, nt, 1)
         return

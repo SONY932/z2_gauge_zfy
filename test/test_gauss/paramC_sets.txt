@@ -1,0 +1,17 @@
+0.5  1.0 0.52        0.0   -1
+6    6         80    4
+6    6         80
+8           50     2
+.false.            0
+.true.            100
+.false.            1
+5
+
+# RT, J, h, mu, Q (odd sector, Q=-1)
+# Nlx, Nly, Ltrot, Beta (6x6 lattice, Beta=4)
+# NlxTherm, NlyTherm, LtrotTherm
+# Nwrap, Nbin, Nsweep
+# is_tau, Nthermal
+# is_warm, Nwarm
+# is_global, Nglobal
+# absolute (5=时间铁磁初态)

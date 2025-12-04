@@ -1,0 +1,35 @@
+ ==============================================
+ z2规范场模型
+ 晶格 x 方向长度 Lx          :           6
+ 晶格 y 方向长度 Ly          :           6
+ 跃迁系数 t                  :  0.50000000000000000     
+ 规范场耦合系数 J            :   1.0000000000000000     
+ 规范场横场强度 h            :  0.52000000000000002     
+ 化学势 mu                   :   0.0000000000000000     
+ 所选取的规范扇区 Q          :  -1.0000000000000000     
+ 热化步数 Nwarm               :         100
+ 选择的初始化场构型方式 absolute :           5
+ 逆温度 Beta                   :   4.0000000000000000     
+ 虚时长度 Ltrot                :          80
+ => Dtau = Beta / Ltrot      :   5.0000000000000003E-002
+ 稳定化频率 Nwrap              :           8
+ # Bins                       :          50
+ 来回扫的更新次数 Nsweep        :           2
+ # No. of MPI processes       :           1
+ ==============================================
+ ==============================================
+ Starting thermalization (gauge-only):
+   Strategy: Local updates only
+   Warning: May be slow for strong time coupling!
+ ==============================================
+  Therm step   100/  100 - accept ratio:   0.0178
+ Thermalize Accept Ratio                        :   1.7803819444444442E-002
+ Progress           20 : Accept_Klocal_shift:    1.5974392361111110E-002
+ Progress           20 : Accept_lambda_local:    0.0000000000000000     
+ Progress           40 : Accept_Klocal_shift:    1.6041666666666666E-002
+ Progress           40 : Accept_lambda_local:    0.0000000000000000     
+ Accept_Klocal_shift                            :   1.6048611111111111E-002
+ Accept_lambda_local                            :   0.0000000000000000     
+ Max diff Matrix                                :   5.3879785047919390E-003
+ Mean diff Matrix                               :   1.5357065185008815E-003
+ Tot CPU time                                   :   4.2212615070000004     

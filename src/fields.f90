@@ -4,6 +4,8 @@ module Fields_mod
     implicit none
 
     public :: SigmaConf, conf_in, conf_out
+    public :: gauss_boson_ratio_lambda, gauss_boson_ratio_sigma
+    public :: count_site_sigma_x_discontinuity
     private
 
     type :: SigmaConf
@@ -578,27 +580,24 @@ contains
     end subroutine lambda_random_fill
 
     subroutine lambda_enforce_sector(lambda_vec)
+        ! 根据 PNAS SI 的正确实现：
+        ! 扇区信息 Q 通过投影公式中的 (1-Q)/2 项编码，不是通过 ∏λ = Q
+        ! 所以这里不需要强制 ∏λ 等于任何值
+        ! 
+        ! 该函数现在只负责将 λ 值规范化为 ±1
         real(kind=8), dimension(:), intent(inout) :: lambda_vec
-        real(kind=8) :: prod, target
         integer :: ii
 
-        prod = 1.d0
         do ii = 1, size(lambda_vec)
             if (lambda_vec(ii) >= 0.d0) then
                 lambda_vec(ii) = 1.d0
             else
                 lambda_vec(ii) = -1.d0
             endif
-            prod = prod * lambda_vec(ii)
         enddo
-        if (Q >= 0.d0) then
-            target = 1.d0
-        else
-            target = -1.d0
-        endif
-        if (prod * target < 0.d0) then
-            lambda_vec(size(lambda_vec)) = -lambda_vec(size(lambda_vec))
-        endif
+        
+        ! 注意：不再强制 ∏λ = Q
+        ! 扇区选择通过 gauss_boson_ratio_lambda 中的 n_Q = (1-Q)/2 项实现
         return
     end subroutine lambda_enforce_sector
 
@@ -611,4 +610,140 @@ contains
         X = sqrt(-2.0*log(X1))*cos(2.0*Pi*X2) ! Gaussian distribution
         return
     end function rng_Gaussian
+
+    !=========================================================================
+    ! 高斯约束玻色权重相关函数
+    !=========================================================================
+    !
+    ! 根据 PNAS SI Appendix A，高斯投影的玻色部分为：
+    ! W_boson(σ,λ,Q) = ∏_r exp[iπ/2 (1-λ_r) * (Σ_{b∈+r}(1-σ^x_b)/2 + (1-Q_r)/2)]
+    !
+    ! 其中：
+    ! - σ^x_b = σ(b, Ltrot) * σ(b, 1)（时间边界处的 σ^x 本征值）
+    ! - (1-σ^x_b)/2 = 0 如果 σ^x = +1（时间连续），1 如果 σ^x = -1（时间不连续）
+    ! - Q_r 是扇区（+1 为 even，-1 为 odd）
+    !
+    ! 当 λ_r = +1 时，该格点的贡献为 1
+    ! 当 λ_r = -1 时，贡献为 (-1)^{n_b + n_Q}，其中
+    !   n_b = 相邻四条键中时间不连续的个数
+    !   n_Q = (1-Q_r)/2
+    !=========================================================================
+
+    ! 计算单个格点的 σ^x 之和：Σ_{b∈+r}(1-σ^x_b)/2
+    ! 返回值为 0,1,2,3,4 之一
+    integer function count_site_sigma_x_discontinuity(ii, sigma, Latt)
+        integer, intent(in) :: ii
+        real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma
+        class(SquareLattice), intent(in) :: Latt
+        integer :: nb, bond_idx
+        real(kind=8) :: sigma_x
+        
+        count_site_sigma_x_discontinuity = 0
+        do nb = 1, 4
+            bond_idx = Latt%site_bonds(ii, nb)
+            ! σ^x = σ(b, Ltrot) * σ(b, 1)
+            sigma_x = sigma(bond_idx, Ltrot) * sigma(bond_idx, 1)
+            ! (1 - σ^x)/2 = 1 当 σ^x = -1（不连续），0 当 σ^x = +1（连续）
+            if (sigma_x < 0.d0) then
+                count_site_sigma_x_discontinuity = count_site_sigma_x_discontinuity + 1
+            endif
+        enddo
+        return
+    end function count_site_sigma_x_discontinuity
+
+    ! 计算翻转 λ_ii 时的玻色权重比
+    ! ratio = W_boson(σ, λ', Q) / W_boson(σ, λ, Q)
+    ! 当翻转 λ_ii 时，只有格点 ii 的贡献改变
+    ! 比值 = (-1)^{n_b + n_Q}，其中 n_b 和 n_Q 如上所述
+    real(kind=8) function gauss_boson_ratio_lambda(ii, sigma, lambda, Latt)
+        integer, intent(in) :: ii
+        real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma
+        real(kind=8), dimension(Lq), intent(in) :: lambda
+        class(SquareLattice), intent(in) :: Latt
+        integer :: n_b, n_Q, exponent
+        
+        ! 计算 n_b：相邻四条键中时间不连续的个数
+        n_b = count_site_sigma_x_discontinuity(ii, sigma, Latt)
+        
+        ! 计算 n_Q = (1-Q)/2
+        if (Q >= 0.d0) then
+            n_Q = 0  ! even sector, Q = +1
+        else
+            n_Q = 1  ! odd sector, Q = -1
+        endif
+        
+        ! 玻色权重比 = (-1)^{n_b + n_Q}
+        exponent = n_b + n_Q
+        if (mod(exponent, 2) == 0) then
+            gauss_boson_ratio_lambda = 1.d0
+        else
+            gauss_boson_ratio_lambda = -1.d0
+        endif
+        return
+    end function gauss_boson_ratio_lambda
+
+    ! 计算翻转键 bond_idx 在时间片 ntau 时对高斯玻色权重的贡献
+    ! 只有当 ntau == 1 或 ntau == Ltrot 时才会影响 σ^x
+    ! 每条键影响两个格点（键的两端）
+    real(kind=8) function gauss_boson_ratio_sigma(bond_idx, ntau, sigma, sigma_new_val, lambda, Latt)
+        integer, intent(in) :: bond_idx, ntau
+        real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma
+        real(kind=8), intent(in) :: sigma_new_val
+        real(kind=8), dimension(Lq), intent(in) :: lambda
+        class(SquareLattice), intent(in) :: Latt
+        
+        integer :: site1, site2
+        real(kind=8) :: old_sigma_x, new_sigma_x
+        real(kind=8) :: ratio1, ratio2
+        integer :: n_Q
+        
+        gauss_boson_ratio_sigma = 1.d0
+        
+        ! 只有翻转边界时间片才会影响 σ^x
+        if (ntau /= 1 .and. ntau /= Ltrot) return
+        
+        ! 获取键的两个端点
+        site1 = Latt%bond_list(bond_idx, 1)
+        site2 = Latt%bond_list(bond_idx, 2)
+        
+        ! 计算 n_Q
+        if (Q >= 0.d0) then
+            n_Q = 0
+        else
+            n_Q = 1
+        endif
+        
+        ! 计算旧的 σ^x 和新的 σ^x
+        old_sigma_x = sigma(bond_idx, Ltrot) * sigma(bond_idx, 1)
+        if (ntau == 1) then
+            new_sigma_x = sigma(bond_idx, Ltrot) * sigma_new_val
+        else  ! ntau == Ltrot
+            new_sigma_x = sigma_new_val * sigma(bond_idx, 1)
+        endif
+        
+        ! 如果 σ^x 没有改变，则比值为 1
+        if (old_sigma_x * new_sigma_x > 0.d0) return
+        
+        ! σ^x 改变了：从 +1 变成 -1 或反之
+        ! 对于每个相邻格点，如果 λ = -1，则贡献一个因子 (-1)
+        
+        ! 格点 site1 的贡献
+        if (lambda(site1) < 0.d0) then
+            ! λ = -1，n_b 改变了 1，贡献 (-1)^{1} = -1
+            ratio1 = -1.d0
+        else
+            ratio1 = 1.d0
+        endif
+        
+        ! 格点 site2 的贡献
+        if (lambda(site2) < 0.d0) then
+            ratio2 = -1.d0
+        else
+            ratio2 = 1.d0
+        endif
+        
+        gauss_boson_ratio_sigma = ratio1 * ratio2
+        return
+    end function gauss_boson_ratio_sigma
+
 end module Fields_mod
