@@ -1,0 +1,33 @@
+ ==============================================
+ z2规范场模型
+ 晶格 x 方向长度 Lx          :           4
+ 晶格 y 方向长度 Ly          :           4
+ 跃迁系数 t                  :   1.0000000000000000     
+ 规范场耦合系数 J            :   3.0000000000000000     
+ 规范场横场强度 h            :  0.50000000000000000     
+ 化学势 mu                   :   0.0000000000000000     
+ 所选取的规范扇区 Q          :   1.0000000000000000     
+ 全局更新频率 Nglobal          :           2
+ 热化步数 Nwarm               :          50
+ 选择的初始化场构型方式 absolute :           1
+ 逆温度 Beta                   :   2.0000000000000000     
+ 虚时长度 Ltrot                :           8
+ => Dtau = Beta / Ltrot      :  0.25000000000000000     
+ 稳定化频率 Nwrap              :           2
+ # Bins                       :           5
+ 来回扫的更新次数 Nsweep        :           2
+ # No. of MPI processes       :           1
+ ==============================================
+ ==============================================
+ Starting thermalization (gauge-only):
+   Strategy: Wolff (time) + Local (space)
+   Reason: Strong time coupling (gamma≈   1.0423154846624378      ) requires cluster updates
+ ==============================================
+ Thermalize Accept Ratio                        :   3.2500000000000001E-002
+ Average size of Wolff cluster                  :   6.2999999999999998     
+ Accept_Kglobal                                 :  0.10000000000000001     
+ Accept_Klocal_shift                            :   1.9531250000000000E-003
+ Accept_lambda_local                            :   8.1250000000000003E-002
+ Max diff Matrix                                :   1.9236714525465581     
+ Mean diff Matrix                               :   3.2092932733634325E-002
+ Tot CPU time                                   :   2.1346499000000001E-002

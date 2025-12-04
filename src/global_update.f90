@@ -352,4 +352,5 @@ contains
         endif
         return
     end subroutine Global_control_print
+
 end module GlobalUpdate_mod

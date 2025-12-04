@@ -157,6 +157,7 @@ contains
         logical, intent(inout) :: is_beta
         logical, intent(in) :: toggle
         integer :: Nobs, Nobst, nsw
+        integer :: n_lambda_accept, n_lambda_total
 
         call this%reset(toggle)
         Nobs = 0; Nobst = 0
@@ -168,8 +169,12 @@ contains
                 call this%sweep_R(PropU, PropD, WrU, WrD, iseed, toggle, Nobs, Nobst)
                 call this%sweep_L(PropU, PropD, WrU, WrD, iseed, Nobs)
             endif
-            ! λ 更新现在在 LocalK_prop_L/R 中的每个时间片进行
-            ! 使用正确的高斯约束公式（费米子行列式比 × 玻色权重比）
+            ! λ 更新在 sweep 结束后进行（global update 方式）
+            ! 此时 Green 函数刚刚被稳定化，避免了 local update 中的数值不稳定
+            ! 注意：λ 可以单格点翻转，不需要成对
+            call Global_lambda_update(PropU%Gr, PropD%Gr, iseed, n_lambda_accept, n_lambda_total)
+            ! 更新 λ 接受率统计
+            call update_lambda_acc(n_lambda_accept, n_lambda_total)
         enddo
         call Obs_equal%ave(Nobs)
         if (toggle) call Obs_tau%ave(Nobst)
@@ -209,4 +214,15 @@ contains
         endif
         return
     end subroutine Therm_control_print
+
+    subroutine update_lambda_acc(n_accept, n_total)
+        integer, intent(in) :: n_accept, n_total
+        integer :: ii
+        do ii = 1, n_accept
+            call Acc_lambda%count(.true.)
+        enddo
+        do ii = 1, n_total - n_accept
+            call Acc_lambda%count(.false.)
+        enddo
+    end subroutine update_lambda_acc
 end module LocalSweep_mod

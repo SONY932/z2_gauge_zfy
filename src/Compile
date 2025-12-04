@@ -3,7 +3,7 @@ SRCS = calc_basic.f90 lattice.f90 fields.f90 \
        non_interact.f90 operator_kin.f90 model.f90 process_matrix.f90 \
        multiply.f90 obser_equal.f90 obser_tau.f90 stabilization.f90 \
        localK.f90 globalK.f90 \
-       dynamics.f90 local_sweep.f90 global_update.f90 \
+       dynamics.f90 global_update.f90 local_sweep.f90 \
        fourier_trans.f90 main.f90
 OBJS = $(SRCS:.f90=.o)
 
