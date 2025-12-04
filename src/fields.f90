@@ -565,17 +565,8 @@ contains
         real(kind=8) :: X
         integer :: ii
 
-        ! λ 随机化：每个格点的 λ 取 +1 或 -1
-        do ii = 1, size(lambda_vec)
-            X = ranf(seed)
-            if (X >= 0.5d0) then
-                lambda_vec(ii) = 1.d0
-            else
-                lambda_vec(ii) = -1.d0
-            endif
-        enddo
-        ! 强制满足 Q 扇区约束：Π_r λ_r = Q
-        call lambda_enforce_sector(lambda_vec)
+        ! 初始化为全 1
+        lambda_vec = 1.d0
         return
     end subroutine lambda_random_fill
 

@@ -340,6 +340,65 @@ contains
     !   3) 再对 M_lambda 做一次矩阵求逆得到 Gr_lambda。
     ! 这里只追求物理正确性和稳健性，允许额外的 O(N^3) 开销。
     !------------------------------------------------------------------
+    subroutine apply_P_to_green(Gr)
+! ===================================================================
+! 从 G_0 = (1 + B)^{-1} 计算 G_λ = (1 + P[λ]B)^{-1}
+! 
+! 推导：
+!   M_0 = G_0^{-1} = 1 + B
+!   M_λ = 1 + P[λ]B = 1 + P[λ](M_0 - 1) = P[λ]M_0 + (I - P[λ])
+!   G_λ = M_λ^{-1}
+!
+! P[λ] 是对角矩阵（条件数 = 1），不会放大误差
+! ===================================================================
+        complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: Gr
+        complex(kind=8), allocatable :: M0(:,:), Mlambda(:,:)
+        real(kind=8) :: lam_i
+        integer :: i, j, info
+        logical :: all_one
+
+        ! 若当前 λ 全为 1，则 P[λ] = I，G_λ = G_0，直接返回
+        all_one = .true.
+        do i = 1, Ndim
+            if (abs(NsigL_K%lambda(i) - 1.d0) > 1.d-12) then
+                all_one = .false.
+                exit
+            endif
+        enddo
+        if (all_one) return
+
+        allocate(M0(Ndim, Ndim), Mlambda(Ndim, Ndim))
+
+        ! 第一步：M0 = Gr^{-1} = 1 + B
+        M0 = Gr
+        call invert_matrix(M0, info)
+        if (info /= 0) then
+            deallocate(M0, Mlambda)
+            return
+        endif
+
+        ! 第二步：M_λ = P[λ]*M0 + (I - P[λ])
+        do i = 1, Ndim
+            lam_i = NsigL_K%lambda(i)
+            do j = 1, Ndim
+                if (i == j) then
+                    Mlambda(i, j) = dcmplx(lam_i, 0.d0) * M0(i, j) + dcmplx(1.d0 - lam_i, 0.d0)
+                else
+                    Mlambda(i, j) = dcmplx(lam_i, 0.d0) * M0(i, j)
+                endif
+            enddo
+        enddo
+
+        ! 第三步：G_λ = M_λ^{-1}
+        call invert_matrix(Mlambda, info)
+        if (info == 0) then
+            Gr = Mlambda
+        endif
+
+        deallocate(M0, Mlambda)
+        return
+    end subroutine apply_P_to_green
+
     subroutine apply_lambda_projection(Gr)
         complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: Gr
         complex(kind=8), allocatable :: M0(:,:), Mlambda(:,:)
@@ -460,7 +519,9 @@ contains
         WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
         if (nt == Ltrot) then
             ! 计算 G_0 = (1 + B_tot)^{-1}
-            ! 注意：暂时不应用 P[λ]，因为传播逻辑需要与稳定化一致
+            ! 注意：Prop%Gr 存储 G_0，不转换为 G_λ
+            ! 传播操作（mmult_L/R）假设 G 是 G_0
+            ! λ 的效应通过玻色部分和 λ 更新来实现
             Gr = dcmplx(0.d0, 0.d0)
             call stab_green(Gr, Prop, nt)
             Prop%Gr = Gr
@@ -494,6 +555,7 @@ contains
         if (nt .ne. Ltrot) then
             call stab_UL(Prop)
             ! 计算 G_0 = (1 + B_tot)^{-1}
+            ! 不转换为 G_λ，因为传播操作需要 G_0
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
@@ -533,6 +595,7 @@ contains
         if (nt .ne. 0) then
             call stab_UR(Prop)
             ! 计算 G_0 = (1 + B_tot)^{-1}
+            ! 不转换为 G_λ，因为传播操作需要 G_0
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif

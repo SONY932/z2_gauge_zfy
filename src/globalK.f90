@@ -167,6 +167,21 @@ contains
     !=========================================================================
     
     subroutine Global_lambda_update(GrU, GrD, iseed, n_accept, n_total)
+! ===================================================================
+! λ 场更新
+!
+! 重要说明：
+! - 传入的 GrU, GrD 是 G_0 = (1 + B)^{-1}，不是 G_λ
+! - λ 更新需要 G_λ = (1 + P[λ]B)^{-1}
+! - 但 λ 翻转不改变 B，所以 G_0 不需要更新
+! - 我们临时计算 G_λ 进行接受率计算
+!
+! 方案：
+! 1. 一次性从 G_0 计算 G_λ
+! 2. 遍历所有格点，使用 G_λ 计算接受率
+! 3. 如果接受，用 rank-1 公式更新 G_λ，翻转 λ
+! 4. 最后 G_0 不变（因为 B 没变）
+! ===================================================================
         complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: GrU, GrD
         integer, intent(inout) :: iseed
         integer, intent(out) :: n_accept, n_total
@@ -178,15 +193,24 @@ contains
         real(kind=8), parameter :: tol = 0.1d0
         logical :: safe
         
+        ! 临时存储 G_λ
+        complex(kind=8), dimension(Ndim, Ndim) :: Glambda_U, Glambda_D
+        
         n_accept = 0
         n_total = 0
+        
+        ! 从 G_0 计算 G_λ
+        Glambda_U = GrU
+        Glambda_D = GrD
+        call compute_G_lambda_from_G0(Glambda_U)
+        call compute_G_lambda_from_G0(Glambda_D)
         
         ! 遍历所有格点，对每个格点尝试翻转 λ
         do ii = 1, Lq
             n_total = n_total + 1
             
-            Gii_U = real(GrU(ii, ii))
-            Gii_D = real(GrD(ii, ii))
+            Gii_U = real(Glambda_U(ii, ii))
+            Gii_D = real(Glambda_D(ii, ii))
             
             ! 检查 Green 函数对角元是否在物理区间
             safe = .true.
@@ -197,20 +221,7 @@ contains
                 cycle
             endif
             
-            ! ===================================================================
-            ! 费米子行列式比
-            ! 
-            ! 对于 G_λ = (I + P[λ]B)^{-1}，翻转 λ_i 的行列式比为：
-            ! det[I + P'B] / det[I + PB] = |2G_λ(i, i) - 1|
-            ! 
-            ! 推导：设 P' - P = Δ = -2λ_i * E_{ii}
-            ! 使用 Sherman-Morrison：det[I + P'B] = det[I + PB + ΔB]
-            !                      = det[I + PB] * (1 + v^T G_λ u)
-            ! 其中 u = -2λ_i * e_i, v = B^T * e_i
-            ! v^T G_λ u = -2λ_i * (BG_λ)_{ii} = -2λ_i * λ_i * (1 - G_λ(i,i))
-            !          = -2(1 - G_λ(i,i)) = 2G_λ(i,i) - 2
-            ! 所以 1 + v^T G_λ u = 2G_λ(i,i) - 1
-            ! ===================================================================
+            ! 费米子行列式比：|2G_λ(i, i) - 1|
             ratio_fermion_U = abs(2.d0 * Gii_U - 1.d0)
             ratio_fermion_D = abs(2.d0 * Gii_D - 1.d0)
             
@@ -224,32 +235,90 @@ contains
             if (abs(ratio_total) > random) then
                 n_accept = n_accept + 1
                 
-                ! 更新 Green 函数：G = (I + P[λ]B)^{-1}
-                ! 当 λ_i 翻转时，P[λ] 的第 i 个对角元素从 λ_i 变成 -λ_i
-                ! 使用 Sherman-Morrison 公式更新
-                call lambda_update_Green(GrU, ii)
-                call lambda_update_Green(GrD, ii)
+                ! 更新 G_λ（用于后续的 λ 翻转）
+                call lambda_update_Green(Glambda_U, ii)
+                call lambda_update_Green(Glambda_D, ii)
                 
                 ! 翻转 λ
                 NsigL_K%lambda(ii) = -NsigL_K%lambda(ii)
             endif
         enddo
+        
+        ! 注意：G_0 (GrU, GrD) 不需要更新，因为 λ 翻转不改变 B
         return
     contains
+        subroutine compute_G_lambda_from_G0(Gr)
+            ! 从 G_0 = (1 + B)^{-1} 计算 G_λ = (1 + P[λ]B)^{-1}
+            ! 
+            ! M_0 = G_0^{-1} = 1 + B
+            ! M_λ = 1 + P[λ]B = P[λ]M_0 + (I - P[λ])
+            ! G_λ = M_λ^{-1}
+            complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: Gr
+            complex(kind=8), allocatable :: M0(:,:), Mlambda(:,:)
+            real(kind=8) :: lam_i
+            integer :: i, j, info
+            integer, allocatable :: ipiv(:)
+            complex(kind=8), allocatable :: work(:)
+            integer :: lwork
+            logical :: all_one
+            
+            ! 如果 λ 全为 1，G_λ = G_0，直接返回
+            all_one = .true.
+            do i = 1, Ndim
+                if (abs(NsigL_K%lambda(i) - 1.d0) > 1.d-12) then
+                    all_one = .false.
+                    exit
+                endif
+            enddo
+            if (all_one) return
+            
+            allocate(M0(Ndim, Ndim), Mlambda(Ndim, Ndim))
+            allocate(ipiv(Ndim))
+            lwork = Ndim * Ndim
+            allocate(work(lwork))
+            
+            ! M0 = Gr^{-1}
+            M0 = Gr
+            call ZGETRF(Ndim, Ndim, M0, Ndim, ipiv, info)
+            if (info /= 0) then
+                deallocate(M0, Mlambda, ipiv, work)
+                return
+            endif
+            call ZGETRI(Ndim, M0, Ndim, ipiv, work, lwork, info)
+            if (info /= 0) then
+                deallocate(M0, Mlambda, ipiv, work)
+                return
+            endif
+            
+            ! M_λ = P[λ]*M0 + (I - P[λ])
+            do i = 1, Ndim
+                lam_i = NsigL_K%lambda(i)
+                do j = 1, Ndim
+                    if (i == j) then
+                        Mlambda(i, j) = dcmplx(lam_i, 0.d0) * M0(i, j) + dcmplx(1.d0 - lam_i, 0.d0)
+                    else
+                        Mlambda(i, j) = dcmplx(lam_i, 0.d0) * M0(i, j)
+                    endif
+                enddo
+            enddo
+            
+            ! G_λ = M_λ^{-1}
+            call ZGETRF(Ndim, Ndim, Mlambda, Ndim, ipiv, info)
+            if (info /= 0) then
+                deallocate(M0, Mlambda, ipiv, work)
+                return
+            endif
+            call ZGETRI(Ndim, Mlambda, Ndim, ipiv, work, lwork, info)
+            if (info == 0) then
+                Gr = Mlambda
+            endif
+            
+            deallocate(M0, Mlambda, ipiv, work)
+        end subroutine compute_G_lambda_from_G0
+        
         subroutine lambda_update_Green(Gr, i)
-            ! ===================================================================
-            ! 更新 Green 函数（rank-1 Sherman-Morrison）
-            ! 
-            ! 对于 G_λ = (I + P[λ]B)^{-1}，翻转 λ_i 后的更新公式为：
-            ! G' = G_λ + 2 * G_λ[:, i] * (I - G_λ)[i, :] / (2G_λ(i,i) - 1)
-            ! 
-            ! 推导：使用 Sherman-Morrison 公式
-            ! G' = G - G u (1 + v^T G u)^{-1} v^T G
-            ! 其中 u = -2λ_i * e_i, v^T = (B 的第 i 行)
-            ! 由于 BG_λ = P(I - G_λ)，有 v^T G = λ_i(I - G_λ)[i,:]
-            ! 代入得 G' = G + 2λ_i G[:, i] * λ_i(I - G)[i,:] / (2G(i,i) - 1)
-            !         = G + 2 G[:, i] * (I - G)[i,:] / (2G(i,i) - 1)
-            ! ===================================================================
+            ! 更新 G_λ（rank-1 Sherman-Morrison）
+            ! G' = G + 2 * G[:, i] * (I - G)[i, :] / (2G(i,i) - 1)
             complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: Gr
             integer, intent(in) :: i
             complex(kind=8) :: denom
@@ -260,8 +329,6 @@ contains
             
             if (abs(denom) < 1.d-300) return
             
-            ! col_i = G[:, i]
-            ! row_i = (I - G)[i, :]
             do kk = 1, Ndim
                 col_i(kk) = Gr(kk, i)
                 if (kk == i) then
@@ -271,7 +338,6 @@ contains
                 endif
             enddo
             
-            ! G' = G + 2 * col_i ⊗ row_i / denom
             do kk = 1, Ndim
                 do ll = 1, Ndim
                     Gr(kk, ll) = Gr(kk, ll) + 2.d0 * col_i(kk) * row_i(ll) / denom
