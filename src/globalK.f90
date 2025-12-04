@@ -599,13 +599,21 @@ contains
 
     subroutine GlobalK_prop_L(PropU, PropD, log_ratio_fermion, sigma_new, nt)
         ! 向左传播时计算费米子行列式比并更新 Green 函数
-        ! 使用正确的 Woodbury 公式（包含 P[λ]）
+        ! 使用正确的 Woodbury 公式
+        ! 
+        ! 关键：需要维护一个"当前" sigma 状态
+        ! 每次 bond 更新后，sigma_current 中该 bond 的值被更新为 sigma_new 中的值
+        ! 这样 L_cols 和 Linv_rows 的计算才与 G 保持一致
         class(Propagator), intent(inout) :: PropU, PropD
         real(kind=8), intent(inout) :: log_ratio_fermion
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma_new
         integer, intent(in) :: nt
         integer :: ii, grp, idx
         real(kind=8) :: ratio
+        real(kind=8), dimension(2*Lq, Ltrot) :: sigma_current
+
+        ! 初始化当前 sigma 状态为原始 sigma
+        sigma_current = NsigL_K%sigma
 
         ! 按组顺序处理（从 group_4 到 group_1）
         ! 对于每个组内的 bonds，使用 Woodbury 公式
@@ -614,35 +622,40 @@ contains
             case (4)
                 do idx = size(Latt%group_4), 1, -1
                     ii = Latt%group_4(idx)
-                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, sigma_current, &
                         sigma_new, ii, nt, grp, ratio)
                     log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                    ! 更新当前 sigma 状态
+                    sigma_current(ii, nt) = sigma_new(ii, nt)
                 enddo
             case (3)
                 do idx = size(Latt%group_3), 1, -1
                     ii = Latt%group_3(idx)
-                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, sigma_current, &
                         sigma_new, ii, nt, grp, ratio)
                     log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                    sigma_current(ii, nt) = sigma_new(ii, nt)
                 enddo
             case (2)
                 do idx = size(Latt%group_2), 1, -1
                     ii = Latt%group_2(idx)
-                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, sigma_current, &
                         sigma_new, ii, nt, grp, ratio)
                     log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                    sigma_current(ii, nt) = sigma_new(ii, nt)
                 enddo
             case (1)
                 do idx = size(Latt%group_1), 1, -1
                     ii = Latt%group_1(idx)
-                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, sigma_current, &
                         sigma_new, ii, nt, grp, ratio)
                     log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                    sigma_current(ii, nt) = sigma_new(ii, nt)
                 enddo
             end select
         enddo
         
-        ! wrap G
+        ! wrap G（此时 sigma_current == sigma_new 对于本时间片）
         call Op_K%mmult_L(PropU%Gr, Latt, sigma_new, nt, 1)
         call Op_K%mmult_L(PropD%Gr, Latt, sigma_new, nt, 1)
         call Op_K%mmult_R(PropU%Gr, Latt, sigma_new, nt, -1)
@@ -654,19 +667,26 @@ contains
 
     subroutine GlobalK_prop_R(PropU, PropD, log_ratio_fermion, sigma_new, nt)
         ! 向右传播时计算费米子行列式比并更新 Green 函数
-        ! 使用正确的 Woodbury 公式（包含 P[λ]）
+        ! 使用正确的 Woodbury 公式
+        ! 
+        ! 关键：需要维护一个"当前" sigma 状态
+        ! 每次 bond 更新后，sigma_current 中该 bond 的值被更新为 sigma_new 中的值
         class(Propagator), intent(inout) :: PropU, PropD
         real(kind=8), intent(inout) :: log_ratio_fermion
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma_new
         integer, intent(in) :: nt
         integer :: ii, grp, idx
         real(kind=8) :: ratio
+        real(kind=8), dimension(2*Lq, Ltrot) :: sigma_current
+
+        ! 初始化当前 sigma 状态为原始 sigma
+        sigma_current = NsigL_K%sigma
 
         ! 先 wrap G（使用旧的 sigma）
-        call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
-        call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
-        call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
-        call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_R(PropU%Gr, Latt, sigma_current, nt, 1)
+        call Op_K%mmult_R(PropD%Gr, Latt, sigma_current, nt, 1)
+        call Op_K%mmult_L(PropU%Gr, Latt, sigma_current, nt, -1)
+        call Op_K%mmult_L(PropD%Gr, Latt, sigma_current, nt, -1)
         
         ! 按组顺序处理（从 group_1 到 group_4）
         do grp = 1, 4
@@ -674,30 +694,35 @@ contains
             case (1)
                 do idx = 1, size(Latt%group_1)
                     ii = Latt%group_1(idx)
-                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, sigma_current, &
                         sigma_new, ii, nt, grp, ratio)
                     log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                    ! 更新当前 sigma 状态
+                    sigma_current(ii, nt) = sigma_new(ii, nt)
                 enddo
             case (2)
                 do idx = 1, size(Latt%group_2)
                     ii = Latt%group_2(idx)
-                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, sigma_current, &
                         sigma_new, ii, nt, grp, ratio)
                     log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                    sigma_current(ii, nt) = sigma_new(ii, nt)
                 enddo
             case (3)
                 do idx = 1, size(Latt%group_3)
                     ii = Latt%group_3(idx)
-                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, sigma_current, &
                         sigma_new, ii, nt, grp, ratio)
                     log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                    sigma_current(ii, nt) = sigma_new(ii, nt)
                 enddo
             case (4)
                 do idx = 1, size(Latt%group_4)
                     ii = Latt%group_4(idx)
-                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, NsigL_K%sigma, &
+                    call ratioK_fermion_woodbury(PropU%Gr, PropD%Gr, sigma_current, &
                         sigma_new, ii, nt, grp, ratio)
                     log_ratio_fermion = log_ratio_fermion + log(max(ratio, RATIO_EPS))
+                    sigma_current(ii, nt) = sigma_new(ii, nt)
                 enddo
             end select
         enddo

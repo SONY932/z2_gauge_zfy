@@ -5,7 +5,7 @@ module Stabilize_mod
     implicit none
     
     private
-    public :: Wrap_pre, Wrap_L, Wrap_R, Wrap_tau, Stabilize_init, Stabilize_clear
+    public :: Wrap_pre, Wrap_L, Wrap_L_store, Wrap_R, Wrap_R_store, Wrap_tau, Stabilize_init, Stabilize_clear
     
     complex(kind=kind(0.d0)) ::  Z_one
     complex(kind=8), dimension(:,:), allocatable :: matUDV
@@ -568,6 +568,23 @@ contains
         WrList%DLlist(1:Ndim, nt_st) = Prop%DUL(1:Ndim)
         return
     end subroutine Wrap_L
+
+    subroutine Wrap_L_store(Prop, WrList, nt)
+        ! 只存储 UUL 到 WrapList，不做稳定化检查和 G 重建
+        ! 用于 global update 中
+        class(Propagator), intent(inout) :: Prop
+        class(WrapList), intent(inout) :: WrList
+        integer, intent(in) :: nt
+        integer :: nt_st
+        if (mod(nt, Nwrap) .ne. 0 .and. nt .ne. 0) then
+            write(6,*) "incorrect ortholeft time slice, NT = ", nt; stop
+        endif
+        nt_st = int(nt/Nwrap)
+        WrList%ULlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUL(1:Ndim, 1:Ndim)
+        WrList%VLlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUL(1:Ndim, 1:Ndim)
+        WrList%DLlist(1:Ndim, nt_st) = Prop%DUL(1:Ndim)
+        return
+    end subroutine Wrap_L_store
     
     subroutine Wrap_R(Prop, WrList, nt, flag)
 ! Arguments: 
@@ -608,6 +625,23 @@ contains
         WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
         return
     end subroutine Wrap_R
+
+    subroutine Wrap_R_store(Prop, WrList, nt)
+        ! 只存储 UUR 到 WrapList，不做稳定化检查和 G 重建
+        ! 用于 global update 中
+        class(Propagator), intent(inout) :: Prop
+        class(WrapList), intent(inout) :: WrList
+        integer, intent(in) :: nt
+        integer :: nt_st
+        if (mod(nt, Nwrap) .ne. 0 .and. nt .ne. 0) then
+            write(6,*) "incorrect orthoright time slice, NT = ", nt; stop
+        endif
+        nt_st = int(nt/Nwrap)
+        WrList%URlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUR(1:Ndim, 1:Ndim)
+        WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR(1:Ndim, 1:Ndim)
+        WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
+        return
+    end subroutine Wrap_R_store
 
     subroutine Wrap_tau(Prop, PropGr, WrList, nt)
 ! Arguments: 

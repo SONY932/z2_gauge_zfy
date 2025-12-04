@@ -1,6 +1,7 @@
 module GlobalUpdate_mod ! a combination of shift&Wolff update
     use GlobalK_mod
     use Stabilize_mod
+    use Multiply_mod, only: propK_pre, propT_pre
     use DQMC_Model_mod
     use calc_basic
     implicit none
@@ -240,23 +241,29 @@ contains
         
         log_ratio_fermion = 0.d0
         call this%flip(iseed, size_cluster, log_ratio_space)
+        ! 初始化 G(τ=Ltrot)：使用 Wrap_L 从 WrList 重建
+        call Wrap_L(this%propU, this%wrU, Ltrot)
+        call Wrap_L(this%propD, this%wrD, Ltrot)
         do nt = Ltrot, 1, -1
-            if (mod(nt, Nwrap) == 0) then
-                call Wrap_L(this%propU, this%wrU, nt)
-                call Wrap_L(this%propD, this%wrD, nt)
-            endif
             call propT_L(this%propU, this%propD, NsigL_K%lambda, nt)
             call GlobalK_prop_L(this%propU, this%propD, log_ratio_fermion, sigma_new, nt)
+            if (mod(nt-1, Nwrap) == 0 .and. nt > 1) then
+                ! 在 global update 中，只存储 UUL，不重建 G
+                ! 因为 G 已经通过 Woodbury 更新，而 WrList.URlist 仍然是基于原始 sigma
+                call Wrap_L_store(this%propU, this%wrU, nt-1)
+                call Wrap_L_store(this%propD, this%wrD, nt-1)
+            endif
         enddo
-        call Wrap_L(this%propU, this%wrU, 0)
-        call Wrap_L(this%propD, this%wrD, 0)
+        call Wrap_L_store(this%propU, this%wrU, 0)
+        call Wrap_L_store(this%propD, this%wrD, 0)
         log_ratio_total = log_ratio_fermion + log_ratio_space
         random = ranf(iseed)
         if (min(0.d0, log_ratio_total) .ge. log(max(random, RATIO_EPS))) then
             call Acc_Kg%count(.true.)
             NsigL_K%sigma = sigma_new
             call PropU%asgn(this%propU); call PropD%asgn(this%propD)
-            call WrU%asgn(this%wrU);     call WrD%asgn(this%wrD)
+            ! 重新准备稳定化链，确保 WrList 中的 UDV 分解与当前 sigma 一致
+            call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
             is_beta = .false.
         else
             call Acc_Kg%count(.false.)
@@ -288,8 +295,10 @@ contains
             call GlobalK_prop_R(this%propU, this%propD, log_ratio_fermion, sigma_new, nt)
             call propT_R(this%propU, this%propD, NsigL_K%lambda, nt)
             if (mod(nt, Nwrap) == 0) then
-                call Wrap_R(this%propU, this%wrU, nt)
-                call Wrap_R(this%propD, this%wrD, nt)
+                ! 在 global update 中，只存储 UUR，不重建 G
+                ! 因为 G 已经通过 Woodbury 更新，而 WrList.ULlist 仍然是基于原始 sigma
+                call Wrap_R_store(this%propU, this%wrU, nt)
+                call Wrap_R_store(this%propD, this%wrD, nt)
             endif
         enddo
         log_ratio_total = log_ratio_fermion + log_ratio_space
@@ -298,7 +307,8 @@ contains
             call Acc_Kg%count(.true.)
             NsigL_K%sigma = sigma_new
             call PropU%asgn(this%propU); call PropD%asgn(this%propD)
-            call WrU%asgn(this%wrU);     call WrD%asgn(this%wrD)
+            ! 重新准备稳定化链，确保 WrList 中的 UDV 分解与当前 sigma 一致
+            call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
             is_beta = .true.
         else
             call Acc_Kg%count(.false.)
@@ -336,6 +346,49 @@ contains
         return
     end subroutine Global_sweep
     
+    subroutine rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
+        ! 重新准备稳定化链
+        ! 在 global update 被接受后调用，确保 WrList 中的 UDV 分解与当前 sigma 一致
+        class(Propagator), intent(inout) :: PropU, PropD
+        class(WrapList),   intent(inout) :: WrU, WrD
+        integer :: nt
+        
+        ! 重置 Propagator 的 UDV 分解
+        PropU%UUR = dcmplx(0.d0, 0.d0)
+        PropU%VUR = dcmplx(0.d0, 0.d0)
+        PropU%DUR = dcmplx(0.d0, 0.d0)
+        PropD%UUR = dcmplx(0.d0, 0.d0)
+        PropD%VUR = dcmplx(0.d0, 0.d0)
+        PropD%DUR = dcmplx(0.d0, 0.d0)
+        
+        ! 清除 WrapList
+        WrU%URlist = dcmplx(0.d0, 0.d0)
+        WrU%VRlist = dcmplx(0.d0, 0.d0)
+        WrU%DRlist = dcmplx(0.d0, 0.d0)
+        WrU%ULlist = dcmplx(0.d0, 0.d0)
+        WrU%VLlist = dcmplx(0.d0, 0.d0)
+        WrU%DLlist = dcmplx(0.d0, 0.d0)
+        WrD%URlist = dcmplx(0.d0, 0.d0)
+        WrD%VRlist = dcmplx(0.d0, 0.d0)
+        WrD%DRlist = dcmplx(0.d0, 0.d0)
+        WrD%ULlist = dcmplx(0.d0, 0.d0)
+        WrD%VLlist = dcmplx(0.d0, 0.d0)
+        WrD%DLlist = dcmplx(0.d0, 0.d0)
+        
+        ! 重新准备稳定化链
+        call Wrap_pre(PropU, WrU, 0)
+        call Wrap_pre(PropD, WrD, 0)
+        do nt = 1, Ltrot
+            if (RT > Zero) call propK_pre(PropU, PropD, NsigL_K%sigma, nt)
+            call propT_pre(PropU, PropD, NsigL_K%lambda, nt)
+            if (mod(nt, Nwrap) == 0) then
+                call Wrap_pre(PropU, WrU, nt)
+                call Wrap_pre(PropD, WrD, nt)
+            endif
+        enddo
+        return
+    end subroutine rebuild_stabilization_chain
+
     subroutine Global_control_print()
         include 'mpif.h'
         real(kind=8) :: collect
