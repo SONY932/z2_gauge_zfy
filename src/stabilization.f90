@@ -359,7 +359,7 @@ contains
 
         ! 若当前 λ 全为 1，则 P[λ] = I，G_λ = G_0，直接返回
         all_one = .true.
-        do i = 1, Ndim
+        do i = 1, Lq
             if (abs(NsigL_K%lambda(i) - 1.d0) > 1.d-12) then
                 all_one = .false.
                 exit
@@ -408,7 +408,7 @@ contains
 
         ! 若当前 λ 全为 1，则直接退化到原 σ-only 情形，不做额外操作。
         all_one = .true.
-        do i = 1, Ndim
+        do i = 1, Lq
             if (abs(NsigL_K%lambda(i) - 1.d0) > 1.d-12) then
                 all_one = .false.
                 exit

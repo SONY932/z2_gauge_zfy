@@ -845,7 +845,7 @@ contains
             
             ! 如果 λ 全为 1，G_λ = G_0，直接返回
             all_one = .true.
-            do i = 1, Ndim
+            do i = 1, Lq
                 if (abs(NsigL_K%lambda(i) - 1.d0) > 1.d-12) then
                     all_one = .false.
                     exit
