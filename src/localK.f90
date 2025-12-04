@@ -533,53 +533,94 @@ contains
 
     subroutine LocalK_prop_L(PropU, PropD, iseed, nt)
         ! 向左扫描时的传播：从 τ 到 τ-1
-        ! 不使用分组，而是：先做所有 metro 更新，再做全矩阵 wrap
-        ! 这样 Green 函数和 UUL 使用完全相同的 B 矩阵
+        ! 使用棋盘分解：同组内的键不共享格点，B 矩阵对易
+        ! 对每组：先做 metro 更新，再做该组的 wrap 和 UUL 更新
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
-        integer :: ii
         
-        ! 先按相反顺序对所有键做 metro 更新
-        do ii = 2*Lq, 1, -1
-            call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
-        enddo
+        ! Group 4: metro -> wrap -> UUL
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt)
+        call Op_K%mmult_L_group(PropU%Gr, Latt%group_4, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropD%Gr, Latt%group_4, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropU%Gr, Latt%group_4, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_R_group(PropD%Gr, Latt%group_4, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_L_group(PropU%UUL, Latt%group_4, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropD%UUL, Latt%group_4, Latt, NsigL_K%sigma, nt, 1)
         
-        ! 再做全矩阵 wrap：G -> B^{-1} * G * B（使用更新后的 σ）
-        call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
-        call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
-        call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
-        call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
+        ! Group 3
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt)
+        call Op_K%mmult_L_group(PropU%Gr, Latt%group_3, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropD%Gr, Latt%group_3, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropU%Gr, Latt%group_3, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_R_group(PropD%Gr, Latt%group_3, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_L_group(PropU%UUL, Latt%group_3, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropD%UUL, Latt%group_3, Latt, NsigL_K%sigma, nt, 1)
         
-        ! 更新 UUL（使用相同的 σ）
-        call Op_K%mmult_L(PropU%UUL, Latt, NsigL_K%sigma, nt, 1)
-        call Op_K%mmult_L(PropD%UUL, Latt, NsigL_K%sigma, nt, 1)
+        ! Group 2
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt)
+        call Op_K%mmult_L_group(PropU%Gr, Latt%group_2, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropD%Gr, Latt%group_2, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropU%Gr, Latt%group_2, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_R_group(PropD%Gr, Latt%group_2, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_L_group(PropU%UUL, Latt%group_2, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropD%UUL, Latt%group_2, Latt, NsigL_K%sigma, nt, 1)
+        
+        ! Group 1
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt)
+        call Op_K%mmult_L_group(PropU%Gr, Latt%group_1, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropD%Gr, Latt%group_1, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropU%Gr, Latt%group_1, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_R_group(PropD%Gr, Latt%group_1, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_L_group(PropU%UUL, Latt%group_1, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropD%UUL, Latt%group_1, Latt, NsigL_K%sigma, nt, 1)
         
         return
     end subroutine LocalK_prop_L
 
     subroutine LocalK_prop_R(PropU, PropD, iseed, nt)
         ! 向右扫描时的传播：从 τ-1 到 τ
-        ! 顺序和 CodeXun 一致：wrap -> metro -> UUR
+        ! 使用棋盘分解：同组内的键不共享格点，B 矩阵对易
+        ! 对每组：先做 UUR 更新和 wrap，再做 metro 更新
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
-        integer :: ii
         
-        ! 1. 先做全矩阵 wrap：G -> B * G * B^{-1}（使用当前 σ）
-        call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
-        call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
-        call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
-        call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
+        ! Group 1: UUR -> wrap -> metro
+        call Op_K%mmult_R_group(PropU%UUR, Latt%group_1, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropD%UUR, Latt%group_1, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropU%Gr, Latt%group_1, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropD%Gr, Latt%group_1, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropU%Gr, Latt%group_1, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_L_group(PropD%Gr, Latt%group_1, Latt, NsigL_K%sigma, nt, -1)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt)
         
-        ! 2. 再按顺序对所有键做 metro 更新（可能改变 σ）
-        do ii = 1, 2*Lq
-            call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
-        enddo
+        ! Group 2
+        call Op_K%mmult_R_group(PropU%UUR, Latt%group_2, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropD%UUR, Latt%group_2, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropU%Gr, Latt%group_2, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropD%Gr, Latt%group_2, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropU%Gr, Latt%group_2, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_L_group(PropD%Gr, Latt%group_2, Latt, NsigL_K%sigma, nt, -1)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt)
         
-        ! 3. 最后更新 UUR（使用更新后的 σ）
-        call Op_K%mmult_R(PropU%UUR, Latt, NsigL_K%sigma, nt, 1)
-        call Op_K%mmult_R(PropD%UUR, Latt, NsigL_K%sigma, nt, 1)
+        ! Group 3
+        call Op_K%mmult_R_group(PropU%UUR, Latt%group_3, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropD%UUR, Latt%group_3, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropU%Gr, Latt%group_3, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropD%Gr, Latt%group_3, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropU%Gr, Latt%group_3, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_L_group(PropD%Gr, Latt%group_3, Latt, NsigL_K%sigma, nt, -1)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt)
+        
+        ! Group 4
+        call Op_K%mmult_R_group(PropU%UUR, Latt%group_4, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropD%UUR, Latt%group_4, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropU%Gr, Latt%group_4, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_R_group(PropD%Gr, Latt%group_4, Latt, NsigL_K%sigma, nt, 1)
+        call Op_K%mmult_L_group(PropU%Gr, Latt%group_4, Latt, NsigL_K%sigma, nt, -1)
+        call Op_K%mmult_L_group(PropD%Gr, Latt%group_4, Latt, NsigL_K%sigma, nt, -1)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt)
         
         return
     end subroutine LocalK_prop_R

@@ -6,37 +6,93 @@ module Multiply_mod
     
 contains
     subroutine propK_pre(Propu, Propd, sigma, nt)
+        ! 使用分组方式更新 UUR，确保和 LocalK_prop_R 的顺序一致
         class(Propagator), intent(inout) :: Propu, Propd
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: nt
-        call Op_K%mmult_R(Propu%UUR, Latt, sigma, nt, 1)
-        call Op_K%mmult_R(Propd%UUR, Latt, sigma, nt, 1)
+        ! Group 1 -> Group 2 -> Group 3 -> Group 4
+        call Op_K%mmult_R_group(Propu%UUR, Latt%group_1, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%UUR, Latt%group_1, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propu%UUR, Latt%group_2, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%UUR, Latt%group_2, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propu%UUR, Latt%group_3, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%UUR, Latt%group_3, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propu%UUR, Latt%group_4, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%UUR, Latt%group_4, Latt, sigma, nt, 1)
         return
     end subroutine propK_pre
     
     subroutine propK_L(Propu, Propd, sigma, nt)
+        ! 使用分组方式，确保和 LocalK_prop_L 的顺序一致
+        ! Group 4 -> Group 3 -> Group 2 -> Group 1
         class(Propagator), intent(inout) :: Propu, Propd
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: nt
-        call Op_K%mmult_L(Propu%Gr, Latt, sigma, nt,  1)
-        call Op_K%mmult_L(Propd%Gr, Latt, sigma, nt,  1)
-        call Op_K%mmult_R(Propu%Gr, Latt, sigma, nt, -1)
-        call Op_K%mmult_R(Propd%Gr, Latt, sigma, nt, -1)
-        call Op_K%mmult_L(Propu%UUL, Latt, sigma, nt,  1)
-        call Op_K%mmult_L(Propd%UUL, Latt, sigma, nt,  1)
+        ! Group 4: wrap and UUL
+        call Op_K%mmult_L_group(Propu%Gr, Latt%group_4, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propd%Gr, Latt%group_4, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propu%Gr, Latt%group_4, Latt, sigma, nt, -1)
+        call Op_K%mmult_R_group(Propd%Gr, Latt%group_4, Latt, sigma, nt, -1)
+        call Op_K%mmult_L_group(Propu%UUL, Latt%group_4, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propd%UUL, Latt%group_4, Latt, sigma, nt, 1)
+        ! Group 3
+        call Op_K%mmult_L_group(Propu%Gr, Latt%group_3, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propd%Gr, Latt%group_3, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propu%Gr, Latt%group_3, Latt, sigma, nt, -1)
+        call Op_K%mmult_R_group(Propd%Gr, Latt%group_3, Latt, sigma, nt, -1)
+        call Op_K%mmult_L_group(Propu%UUL, Latt%group_3, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propd%UUL, Latt%group_3, Latt, sigma, nt, 1)
+        ! Group 2
+        call Op_K%mmult_L_group(Propu%Gr, Latt%group_2, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propd%Gr, Latt%group_2, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propu%Gr, Latt%group_2, Latt, sigma, nt, -1)
+        call Op_K%mmult_R_group(Propd%Gr, Latt%group_2, Latt, sigma, nt, -1)
+        call Op_K%mmult_L_group(Propu%UUL, Latt%group_2, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propd%UUL, Latt%group_2, Latt, sigma, nt, 1)
+        ! Group 1
+        call Op_K%mmult_L_group(Propu%Gr, Latt%group_1, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propd%Gr, Latt%group_1, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propu%Gr, Latt%group_1, Latt, sigma, nt, -1)
+        call Op_K%mmult_R_group(Propd%Gr, Latt%group_1, Latt, sigma, nt, -1)
+        call Op_K%mmult_L_group(Propu%UUL, Latt%group_1, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propd%UUL, Latt%group_1, Latt, sigma, nt, 1)
         return
     end subroutine propK_L
     
     subroutine propK_R(Propu, Propd, sigma, nt)
+        ! 使用分组方式，确保和 LocalK_prop_R 的顺序一致
+        ! Group 1 -> Group 2 -> Group 3 -> Group 4
         class(Propagator), intent(inout) :: Propu, Propd
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: nt
-        call Op_K%mmult_R(Propu%Gr, Latt, sigma, nt,  1)
-        call Op_K%mmult_R(Propd%Gr, Latt, sigma, nt,  1)
-        call Op_K%mmult_L(Propu%Gr, Latt, sigma, nt, -1)
-        call Op_K%mmult_L(Propd%Gr, Latt, sigma, nt, -1)
-        call Op_K%mmult_R(Propu%UUR, Latt, sigma, nt,  1)
-        call Op_K%mmult_R(Propd%UUR, Latt, sigma, nt,  1)
+        ! Group 1: UUR, wrap
+        call Op_K%mmult_R_group(Propu%UUR, Latt%group_1, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%UUR, Latt%group_1, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propu%Gr, Latt%group_1, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%Gr, Latt%group_1, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propu%Gr, Latt%group_1, Latt, sigma, nt, -1)
+        call Op_K%mmult_L_group(Propd%Gr, Latt%group_1, Latt, sigma, nt, -1)
+        ! Group 2
+        call Op_K%mmult_R_group(Propu%UUR, Latt%group_2, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%UUR, Latt%group_2, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propu%Gr, Latt%group_2, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%Gr, Latt%group_2, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propu%Gr, Latt%group_2, Latt, sigma, nt, -1)
+        call Op_K%mmult_L_group(Propd%Gr, Latt%group_2, Latt, sigma, nt, -1)
+        ! Group 3
+        call Op_K%mmult_R_group(Propu%UUR, Latt%group_3, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%UUR, Latt%group_3, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propu%Gr, Latt%group_3, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%Gr, Latt%group_3, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propu%Gr, Latt%group_3, Latt, sigma, nt, -1)
+        call Op_K%mmult_L_group(Propd%Gr, Latt%group_3, Latt, sigma, nt, -1)
+        ! Group 4
+        call Op_K%mmult_R_group(Propu%UUR, Latt%group_4, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%UUR, Latt%group_4, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propu%Gr, Latt%group_4, Latt, sigma, nt, 1)
+        call Op_K%mmult_R_group(Propd%Gr, Latt%group_4, Latt, sigma, nt, 1)
+        call Op_K%mmult_L_group(Propu%Gr, Latt%group_4, Latt, sigma, nt, -1)
+        call Op_K%mmult_L_group(Propd%Gr, Latt%group_4, Latt, sigma, nt, -1)
         return
     end subroutine propK_R
     

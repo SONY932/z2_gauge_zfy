@@ -17,8 +17,8 @@
  # No. of MPI processes       :           1
  ==============================================
  Skipping Bosonic warm-up
- Accept_Klocal_shift                            :   1.7951388888888889E-003
+ Accept_Klocal_shift                            :   2.7083333333333332E-004
  Accept_lambda_local                            :   6.1111111111111116E-002
- Max diff Matrix                                :   2.1671007072639554     
- Mean diff Matrix                               :   1.9476796354046040     
- Tot CPU time                                   :   3.7498451519999998     
+ Max diff Matrix                                :   1.6311294010749355     
+ Mean diff Matrix                               :   1.9505903163556843E-002
+ Tot CPU time                                   :   3.6597646290000001     
