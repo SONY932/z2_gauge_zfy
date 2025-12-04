@@ -16,3 +16,9 @@
  来回扫的更新次数 Nsweep        :           1
  # No. of MPI processes       :           1
  ==============================================
+ Skipping Bosonic warm-up
+ Accept_Klocal_shift                            :   1.7951388888888889E-003
+ Accept_lambda_local                            :   6.1111111111111116E-002
+ Max diff Matrix                                :   40.423679655786600     
+ Mean diff Matrix                               :   1.9573110363828998     
+ Tot CPU time                                   :   3.6849548539999999     
