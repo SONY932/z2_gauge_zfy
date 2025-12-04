@@ -137,6 +137,8 @@ contains
         call mmult(VRVL, Prop%VUR, Prop%VUL)
 ! invULUR = UR^dagger UL^dagger = (UL*UR)^-1; character C: conjugate transpose of UUR and UUL
         call ZGEMM('C', 'C', Ndim, Ndim, Ndim, Z_one, Prop%UUR, Ndim, Prop%UUL, Ndim, dcmplx(0.d0, 0.d0), invULUR, Ndim)
+        
+        
 ! compute: matUDV = (UL*UR)^-1 + DR VR VL DL
         temp = dcmplx(0.d0, 0.d0)
         do nr = 1, Ndim ! temp(1:Ndim, nr) = VRVL(1:Ndim, nr) * DUL(nr)
@@ -152,6 +154,8 @@ contains
 ! matUDV * P  = U D V
         IPVT = 0
         call QDRP_decompose(matUDV, DUP, IPVT, TAU, WORK, Lwork)
+        
+        
         if (nt < Ltrot/2 + 1) then ! ntau < Ltrot/2
 ! UR U D V P^dagger UL G = 1 => 
 ! G=UL^dagger * P * V^-1 * D^-1 * U^dagger * UR^dagger; multiply from right to left
@@ -614,6 +618,8 @@ contains
             ! 计算 G_0 = (1 + B_tot)^{-1}
             ! 不转换为 G_λ，因为传播操作需要 G_0
             call stab_green(Gr, Prop, nt)
+            
+            
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
             if (dif .ge. 5.5d-5) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK

@@ -510,6 +510,12 @@ contains
         Proddet_U = Prod_U(1,1) * Prod_U(2,2) - Prod_U(1,2) * Prod_U(2,1)
         Proddet_D = Prod_D(1,1) * Prod_D(2,2) - Prod_D(1,2) * Prod_D(2,1)
         ratio_fermion = max(abs(Proddet_U * Proddet_D), RATIO_EPS)
+        
+        ! 检查行列式是否过小（接近奇异）
+        if (abs(Proddet_U) < 1.d-14 .or. abs(Proddet_D) < 1.d-14) then
+            ratio_fermion = RATIO_EPS
+            return
+        endif
 
         ! 更新 Green 函数
         Prodinv_U(1,1) =  Prod_U(2,2) / Proddet_U

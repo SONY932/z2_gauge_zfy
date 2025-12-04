@@ -256,6 +256,12 @@ contains
         ! 初始化 G(τ=Ltrot)：使用 Wrap_L 从 WrList 重建
         call Wrap_L(this%propU, this%wrU, Ltrot)
         call Wrap_L(this%propD, this%wrD, Ltrot)
+        
+        ! 检查初始 G 是否有效
+        if (any(isnan(real(this%propU%Gr))) .or. any(isnan(real(this%propD%Gr)))) then
+            write(6,*) "WARNING: NaN in G after Wrap_L(Ltrot) in Global_sweep_L"
+        endif
+        
         do nt = Ltrot, 1, -1
             call propT_L(this%propU, this%propD, NsigL_K%lambda, nt)
             call GlobalK_prop_L(this%propU, this%propD, log_ratio_fermion, sigma_new, nt)
@@ -303,8 +309,20 @@ contains
         call this%flip(iseed, size_cluster, log_ratio_space)
         call Wrap_R(this%propU, this%wrU, 0)
         call Wrap_R(this%propD, this%wrD, 0)
+        
+        ! 检查初始 G 是否有效
+        if (any(isnan(real(this%propU%Gr))) .or. any(isnan(real(this%propD%Gr)))) then
+            write(6,*) "WARNING: NaN in G after Wrap_R(0) in Global_sweep_R"
+        endif
+        
         do nt = 1, Ltrot
             call GlobalK_prop_R(this%propU, this%propD, log_ratio_fermion, sigma_new, nt)
+            
+            ! 检查每个时间片后的 G
+            if (any(isnan(real(this%propU%Gr))) .or. any(isnan(real(this%propD%Gr)))) then
+                write(6,*) "WARNING: NaN in G after GlobalK_prop_R at nt=", nt
+                exit
+            endif
             call propT_R(this%propU, this%propD, NsigL_K%lambda, nt)
             if (mod(nt, Nwrap) == 0) then
                 ! 在 global update 中，只存储 UUR，不重建 G
@@ -366,6 +384,11 @@ contains
         class(WrapList),   intent(inout) :: WrU, WrD
         integer :: nt
         
+        ! 检查输入 PropU%Gr 是否有 NaN
+        if (any(isnan(real(PropU%Gr))) .or. any(isnan(real(PropD%Gr)))) then
+            write(6,*) "WARNING: NaN in PropU/D%Gr before rebuild_stabilization_chain"
+        endif
+        
         ! 重置 Propagator 的 UDV 分解（与 Prop_make 一致：UUR/VUR 为单位矩阵，DUR 为 1）
         PropU%UUR = ZKRON; PropU%VUR = ZKRON; PropU%DUR = dcmplx(1.d0, 0.d0)
         PropU%UUL = ZKRON; PropU%VUL = ZKRON; PropU%DUL = dcmplx(1.d0, 0.d0)
@@ -376,15 +399,19 @@ contains
         WrU%URlist = dcmplx(0.d0, 0.d0)
         WrU%VRlist = dcmplx(0.d0, 0.d0)
         WrU%DRlist = dcmplx(0.d0, 0.d0)
-        WrU%ULlist = dcmplx(0.d0, 0.d0)
-        WrU%VLlist = dcmplx(0.d0, 0.d0)
-        WrU%DLlist = dcmplx(0.d0, 0.d0)
         WrD%URlist = dcmplx(0.d0, 0.d0)
         WrD%VRlist = dcmplx(0.d0, 0.d0)
         WrD%DRlist = dcmplx(0.d0, 0.d0)
-        WrD%ULlist = dcmplx(0.d0, 0.d0)
-        WrD%VLlist = dcmplx(0.d0, 0.d0)
-        WrD%DLlist = dcmplx(0.d0, 0.d0)
+        ! 初始化 ULlist 为单位矩阵，DLlist 为 1
+        ! 这确保在 stab_green 中 matUDV 不会是奇异的
+        do nt = 0, Ltrot/Nwrap
+            WrU%ULlist(:,:,nt) = ZKRON
+            WrU%VLlist(:,:,nt) = ZKRON
+            WrU%DLlist(:,nt) = dcmplx(1.d0, 0.d0)
+            WrD%ULlist(:,:,nt) = ZKRON
+            WrD%VLlist(:,:,nt) = ZKRON
+            WrD%DLlist(:,nt) = dcmplx(1.d0, 0.d0)
+        enddo
         
         ! 重新准备稳定化链（与 Local_sweep_pre 完全一致）
         call Wrap_pre(PropU, WrU, 0)

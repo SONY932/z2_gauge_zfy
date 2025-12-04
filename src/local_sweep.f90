@@ -90,6 +90,18 @@ contains
         class(WrapList),   intent(inout) :: WrU, WrD
         integer :: nt
         call this%reset(.false.)
+        
+        ! 初始化 ULlist 为有效值（单位矩阵和 D=1）
+        ! 这确保在第一次 sweep_R 之前 ULlist 已经有有效数据
+        do nt = 0, Ltrot/Nwrap
+            WrU%ULlist(:,:,nt) = ZKRON
+            WrU%VLlist(:,:,nt) = ZKRON
+            WrU%DLlist(:,nt) = dcmplx(1.d0, 0.d0)
+            WrD%ULlist(:,:,nt) = ZKRON
+            WrD%VLlist(:,:,nt) = ZKRON
+            WrD%DLlist(:,nt) = dcmplx(1.d0, 0.d0)
+        enddo
+        
         call Wrap_pre(PropU, WrU, 0)
         call Wrap_pre(PropD, WrD, 0)
         do nt = 1, Ltrot

@@ -91,8 +91,22 @@ contains
         ! 费米子观测量必须使用 G_λ，而不是 G_0
         Gru = PropU%Gr
         Grd = PropD%Gr
+        
+        ! 检查输入 Green 函数是否有效
+        if (any(isnan(real(Gru))) .or. any(isnan(real(Grd)))) then
+            write(6,*) "WARNING: NaN in G_0 before convert_G0_to_Glambda at ntau=", ntau
+            return
+        endif
+        
         call convert_G0_to_Glambda(Gru)
         call convert_G0_to_Glambda(Grd)
+        
+        ! 检查转换后 Green 函数是否有效
+        if (any(isnan(real(Gru))) .or. any(isnan(real(Grd)))) then
+            write(6,*) "WARNING: NaN in G_lambda after convert_G0_to_Glambda at ntau=", ntau
+            return
+        endif
+        
         qshift_x = PI - 2.d0 * PI / dble(Nlx)
 
 ! 规范场 Z₂ 磁通：B(\tau) = (1/N_\square) \sum_{\square} \prod_{b\in\square} \sigma_b^z(\tau)
@@ -186,11 +200,13 @@ contains
         M0 = Gr
         call ZGETRF(Ndim, Ndim, M0, Ndim, ipiv, info)
         if (info /= 0) then
+            write(6,*) "WARNING: ZGETRF failed in convert_G0_to_Glambda, info=", info
             deallocate(M0, Mlambda, ipiv, work)
             return
         endif
         call ZGETRI(Ndim, M0, Ndim, ipiv, work, lwork, info)
         if (info /= 0) then
+            write(6,*) "WARNING: ZGETRI failed in convert_G0_to_Glambda, info=", info
             deallocate(M0, Mlambda, ipiv, work)
             return
         endif
@@ -210,13 +226,17 @@ contains
         ! G_λ = M_λ^{-1}
         call ZGETRF(Ndim, Ndim, Mlambda, Ndim, ipiv, info)
         if (info /= 0) then
+            write(6,*) "WARNING: ZGETRF(Mlambda) failed, info=", info
             deallocate(M0, Mlambda, ipiv, work)
             return
         endif
         call ZGETRI(Ndim, Mlambda, Ndim, ipiv, work, lwork, info)
-        if (info == 0) then
-            Gr = Mlambda
+        if (info /= 0) then
+            write(6,*) "WARNING: ZGETRI(Mlambda) failed, info=", info
+            deallocate(M0, Mlambda, ipiv, work)
+            return
         endif
+        Gr = Mlambda
         
         deallocate(M0, Mlambda, ipiv, work)
         return
