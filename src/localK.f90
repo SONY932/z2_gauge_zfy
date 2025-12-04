@@ -510,18 +510,19 @@ contains
 
     subroutine LocalK_prop_L(PropU, PropD, iseed, nt)
         ! 向左扫描时的传播：从 τ 到 τ-1
-        ! 参考 CodeXun 的结构
+        ! 使用棋盘分解
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
-        integer :: ii
         
-        ! 步骤 1：对所有键做 metro 更新（从 2*Lq 到 1，与 CodeXun 类似）
-        do ii = 2*Lq, 1, -1
-            call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
-        enddo
+        ! 步骤 1：对所有 group 做 metro 更新
+        ! 顺序：group_4 -> group_3 -> group_2 -> group_1（与 mmult_L 一致）
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt)
+        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt)
         
-        ! 步骤 2：wrap G
+        ! 步骤 2：wrap G（使用棋盘分解的 mmult）
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
@@ -536,25 +537,19 @@ contains
 
     subroutine LocalK_prop_R(PropU, PropD, iseed, nt)
         ! 向右扫描时的传播：从 τ-1 到 τ
-        ! 
-        ! 正确的逻辑：
-        ! 1. 先对整个时间片做一次 wrap（使用棋盘分解的 mmult）
-        ! 2. 然后对所有 group 做 metro 更新
-        ! 3. 最后更新 UUR
+        ! 使用棋盘分解
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
         
-        ! 步骤 1：对整个时间片做一次 wrap
-        ! G(τ) = B(τ) * G(τ-1) * B(τ)^{-1}
-        ! 先 G' = B * G，然后 G'' = G' * B^{-1}
+        ! 步骤 1：wrap G（使用棋盘分解的 mmult）
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
         
         ! 步骤 2：对所有 group 做 metro 更新
-        ! 按 group_1 -> group_2 -> group_3 -> group_4 顺序
+        ! 顺序：group_1 -> group_2 -> group_3 -> group_4（与 mmult_R 一致）
         call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt)
         call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt)
         call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt)

@@ -13,6 +13,12 @@
  => Dtau = Beta / Ltrot      :  0.10000000000000001     
  稳定化频率 Nwrap              :           4
  # Bins                       :           5
- 来回扫的更新次数 Nsweep        :          10
+ 来回扫的更新次数 Nsweep        :           2
  # No. of MPI processes       :           1
  ==============================================
+ Skipping Bosonic warm-up
+ Accept_Klocal_shift                            :   2.8906250000000000E-003
+ Accept_lambda_local                            :   0.0000000000000000     
+ Max diff Matrix                                :   6.1590164392166802E-014
+ Mean diff Matrix                               :   5.1811967751244504E-014
+ Tot CPU time                                   :   3.8394655999999999E-002
