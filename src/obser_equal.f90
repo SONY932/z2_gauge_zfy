@@ -87,8 +87,12 @@ contains
         real(kind=8) :: stag_i, stag_j
         real(kind=8) :: dx, dy
 
+        ! 从 G_0 计算 G_λ = (1 + P[λ]B)^{-1}
+        ! 费米子观测量必须使用 G_λ，而不是 G_0
         Gru = PropU%Gr
         Grd = PropD%Gr
+        call convert_G0_to_Glambda(Gru)
+        call convert_G0_to_Glambda(Grd)
         qshift_x = PI - 2.d0 * PI / dble(Nlx)
 
 ! 规范场 Z₂ 磁通：B(\tau) = (1/N_\square) \sum_{\square} \prod_{b\in\square} \sigma_b^z(\tau)
@@ -147,4 +151,75 @@ contains
         this%density = this%density + density_slice / dble(Lq)
         return
     end subroutine Obs_equal_calc
+
+    subroutine convert_G0_to_Glambda(Gr)
+        ! 从 G_0 = (1 + B)^{-1} 计算 G_λ = (1 + P[λ]B)^{-1}
+        ! 
+        ! M_0 = G_0^{-1} = 1 + B
+        ! M_λ = 1 + P[λ]B = P[λ]M_0 + (I - P[λ])
+        ! G_λ = M_λ^{-1}
+        complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: Gr
+        complex(kind=8), allocatable :: M0(:,:), Mlambda(:,:)
+        real(kind=8) :: lam_i
+        integer :: i, j, info
+        integer, allocatable :: ipiv(:)
+        complex(kind=8), allocatable :: work(:)
+        integer :: lwork
+        logical :: all_one
+        
+        ! 如果 λ 全为 1，G_λ = G_0，直接返回
+        all_one = .true.
+        do i = 1, Lq
+            if (abs(NsigL_K%lambda(i) - 1.d0) > 1.d-12) then
+                all_one = .false.
+                exit
+            endif
+        enddo
+        if (all_one) return
+        
+        allocate(M0(Ndim, Ndim), Mlambda(Ndim, Ndim))
+        allocate(ipiv(Ndim))
+        lwork = Ndim * Ndim
+        allocate(work(lwork))
+        
+        ! M0 = Gr^{-1}
+        M0 = Gr
+        call ZGETRF(Ndim, Ndim, M0, Ndim, ipiv, info)
+        if (info /= 0) then
+            deallocate(M0, Mlambda, ipiv, work)
+            return
+        endif
+        call ZGETRI(Ndim, M0, Ndim, ipiv, work, lwork, info)
+        if (info /= 0) then
+            deallocate(M0, Mlambda, ipiv, work)
+            return
+        endif
+        
+        ! M_λ = P[λ]*M0 + (I - P[λ])
+        do i = 1, Ndim
+            lam_i = NsigL_K%lambda(i)
+            do j = 1, Ndim
+                if (i == j) then
+                    Mlambda(i, j) = dcmplx(lam_i, 0.d0) * M0(i, j) + dcmplx(1.d0 - lam_i, 0.d0)
+                else
+                    Mlambda(i, j) = dcmplx(lam_i, 0.d0) * M0(i, j)
+                endif
+            enddo
+        enddo
+        
+        ! G_λ = M_λ^{-1}
+        call ZGETRF(Ndim, Ndim, Mlambda, Ndim, ipiv, info)
+        if (info /= 0) then
+            deallocate(M0, Mlambda, ipiv, work)
+            return
+        endif
+        call ZGETRI(Ndim, Mlambda, Ndim, ipiv, work, lwork, info)
+        if (info == 0) then
+            Gr = Mlambda
+        endif
+        
+        deallocate(M0, Mlambda, ipiv, work)
+        return
+    end subroutine convert_G0_to_Glambda
+
 end module ObserEqual_mod
