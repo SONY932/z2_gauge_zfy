@@ -160,6 +160,8 @@ contains
         integer :: n_lambda_accept, n_lambda_total
 
         call this%reset(toggle)
+        ! 每个 bin 开始时重新准备稳定化链，确保一致性
+        call this%pre(PropU, PropD, WrU, WrD)
         Nobs = 0; Nobst = 0
         do nsw = 1, Nsweep
             if(is_beta) then

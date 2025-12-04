@@ -513,12 +513,15 @@ contains
         ! ========== 步骤 2：计算 R_Binv_rows = (R_ℓ × B(τ)^{-1})([i,j], :) ==========
         ! R_ℓ × B(τ)^{-1} = B_k^{-1} × L_ℓ^{-1}
         ! 
-        ! 首先计算 Linv_rows = L_ℓ^{-1}([i,j], :)
-        ! 从 [e_i^T; e_j^T] 开始，依次右乘 B_4^{-1}, B_3^{-1}, ..., B_{k+1}^{-1}
+        ! L_ℓ = B_4 × B_3 × ... × B_{k+1}
+        ! L_ℓ^{-1} = B_{k+1}^{-1} × ... × B_3^{-1} × B_4^{-1}
+        ! 
+        ! 计算 Linv_rows = W^T × L_ℓ^{-1}
+        ! 从 [e_i^T; e_j^T] 开始，依次右乘 B_{k+1}^{-1}, B_{k+2}^{-1}, ..., B_4^{-1}（正确的顺序）
         Linv_rows = dcmplx(0.d0, 0.d0)
         Linv_rows(1, P(1)) = dcmplx(1.d0, 0.d0)
         Linv_rows(2, P(2)) = dcmplx(1.d0, 0.d0)
-        do kk = 4, group_idx + 1, -1
+        do kk = group_idx + 1, 4
             call apply_group_inv_to_rows(kk, ntau, Linv_rows)
         enddo
 
@@ -952,14 +955,23 @@ contains
         integer, intent(in) :: ntau, group_idx
         integer :: ii, no, len
         logical, parameter :: DEBUG_NO_METRO = .false.  ! 设为 .true. 来禁用 metro
+        logical, parameter :: DEBUG_ONE_BOND = .false.   ! 设为 .true. 只更新一个 bond
         
         if (DEBUG_NO_METRO) return
         
         len = size(group)
-        do ii = 1, len
-            no = group(ii)
-            call LocalK_metro_woodbury(GrU, GrD, iseed, no, ntau, group_idx)
-        enddo
+        if (DEBUG_ONE_BOND) then
+            ! 只更新第一个 bond 来验证
+            if (len > 0) then
+                no = group(1)
+                call LocalK_metro_woodbury(GrU, GrD, iseed, no, ntau, group_idx)
+            endif
+        else
+            do ii = 1, len
+                no = group(ii)
+                call LocalK_metro_woodbury(GrU, GrD, iseed, no, ntau, group_idx)
+            enddo
+        endif
         return
     end subroutine LocalK_metro_group
 

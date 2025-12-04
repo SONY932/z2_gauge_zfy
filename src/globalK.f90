@@ -80,10 +80,12 @@ contains
         enddo
 
         ! ========== 步骤 2：计算 R_Binv_rows = (R_ℓ × B(τ)^{-1})([i,j], :) ==========
+        ! L_ℓ^{-1} = B_{k+1}^{-1} × ... × B_3^{-1} × B_4^{-1}
+        ! 从 W^T 开始，依次右乘 B_{k+1}^{-1}, B_{k+2}^{-1}, ..., B_4^{-1}
         Linv_rows = dcmplx(0.d0, 0.d0)
         Linv_rows(1, P(1)) = dcmplx(1.d0, 0.d0)
         Linv_rows(2, P(2)) = dcmplx(1.d0, 0.d0)
-        do kk = 4, group_idx + 1, -1
+        do kk = group_idx + 1, 4
             call apply_group_inv_to_rows_global(kk, ntau, sigma_base, Linv_rows)
         enddo
 
