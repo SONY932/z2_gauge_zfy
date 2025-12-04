@@ -533,51 +533,54 @@ contains
 
     subroutine LocalK_prop_L(PropU, PropD, iseed, nt)
         ! 向左扫描时的传播：从 τ 到 τ-1
-        ! 使用原始的按顺序遍历方式
+        ! 不使用分组，而是：先做所有 metro 更新，再做全矩阵 wrap
+        ! 这样 Green 函数和 UUL 使用完全相同的 B 矩阵
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
         integer :: ii
         
-        ! 按相反顺序对所有键做 metro 更新
+        ! 先按相反顺序对所有键做 metro 更新
         do ii = 2*Lq, 1, -1
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
         
-        ! 完整的 wrap：G -> B^{-1} * G * B
+        ! 再做全矩阵 wrap：G -> B^{-1} * G * B（使用更新后的 σ）
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
         call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
         
-        ! 更新 UUL 累积传播子
+        ! 更新 UUL（使用相同的 σ）
         call Op_K%mmult_L(PropU%UUL, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropD%UUL, Latt, NsigL_K%sigma, nt, 1)
+        
         return
     end subroutine LocalK_prop_L
 
     subroutine LocalK_prop_R(PropU, PropD, iseed, nt)
         ! 向右扫描时的传播：从 τ-1 到 τ
-        ! 使用原始的按顺序遍历方式
+        ! 顺序和 CodeXun 一致：wrap -> metro -> UUR
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
         integer :: ii
         
-        ! 完整的 wrap：G -> B * G * B^{-1}
+        ! 1. 先做全矩阵 wrap：G -> B * G * B^{-1}（使用当前 σ）
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
         
-        ! 按顺序对所有键做 metro 更新
+        ! 2. 再按顺序对所有键做 metro 更新（可能改变 σ）
         do ii = 1, 2*Lq
             call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
         enddo
         
-        ! 更新 UUR 累积传播子
+        ! 3. 最后更新 UUR（使用更新后的 σ）
         call Op_K%mmult_R(PropU%UUR, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropD%UUR, Latt, NsigL_K%sigma, nt, 1)
+        
         return
     end subroutine LocalK_prop_R
 

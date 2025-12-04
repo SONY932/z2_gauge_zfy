@@ -144,10 +144,12 @@ contains
 
     subroutine opK_mmult_L(this, Mat, Latt, sigma, ntau, nflag)
 ! In Mat Out Mat * EXP(D(NF)) * UT(NF)
-! 按正向顺序处理所有键，确保 wrap 操作正确
-! mmult_R 给出 B * G = B_n * ... * B_1 * G
-! mmult_L 应该给出 G * B^{-1} = G * B_1^{-1} * ... * B_n^{-1}
-! 所以 mmult_L 按正向顺序处理，每步乘 B_i^{-1}
+! 按相反顺序处理所有键，确保和 mmult_R 给出相同的 B 矩阵
+! mmult_R 给出 B * G = B_n * ... * B_1 * G（按正向顺序处理）
+! mmult_L 给出 G * B = G * B_n * ... * B_1（按相反顺序处理）
+! 这样 B 矩阵定义一致：B = B_n * ... * B_1
+! 按相反顺序处理时：先乘 B_n，再乘 B_{n-1}，...，最后乘 B_1
+! 结果是 Mat * B_n * B_{n-1} * ... * B_1 = Mat * B
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
@@ -159,8 +161,9 @@ contains
         real(kind = 8) :: vec
         complex(kind=8), dimension(Ndim, 2) :: Uhlp
 
-        ! 按正向顺序处理所有键
-        do ii = 1, 2*Lq
+        ! 按相反顺序处理所有键：先乘 B_n，最后乘 B_1
+        ! Mat -> Mat * B_n -> Mat * B_n * B_{n-1} -> ... -> Mat * B_n * ... * B_1
+        do ii = 2*Lq, 1, -1
             vec = sigma(ii, ntau)
             call this%get_exp(vec, nflag)
             P(1) = Latt%bond_list(ii, 1)
