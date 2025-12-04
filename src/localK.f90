@@ -510,27 +510,30 @@ contains
 
     subroutine LocalK_prop_L(PropU, PropD, iseed, nt)
         ! 向左扫描时的传播：从 τ 到 τ-1
-        ! 使用棋盘分解
         ! 
-        ! 重要：sweep_L 中不做 metro 更新！
-        ! 原因：metro 更新会翻转 σ，但 URlist（在 sweep_R 中存储）不会更新。
-        ! 这会导致 Wrap_L 恢复的 UUR（旧 σ）与传播的 Gr（新 σ）不一致，
-        ! 产生虚假的"稳定化误差"。
-        ! 解决方案：只在 sweep_R 中做 metro 更新。
+        ! 与 LocalK_prop_R 类似：
+        ! - wrap 使用棋盘分解（提高 Trotter 精度）
+        ! - metro 逐个 bond 进行（保证 Sherman-Morrison 正确）
+        ! 
+        ! CodeXun 风格：先 metro，再 wrap
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
+        integer :: ii
         
-        ! 注意：这里不做 metro 更新！
-        ! metro 更新只在 sweep_R 的 LocalK_prop_R 中进行
+        ! 步骤 1：逐个 bond 做 metro 更新（先 metro）
+        ! 临时禁用 metro 更新以测试 wrap
+        ! do ii = 2*Lq, 1, -1
+        !     call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
+        ! enddo
         
-        ! 步骤 1：wrap G（使用棋盘分解的 mmult）
+        ! 步骤 2：wrap G（使用棋盘分解，再 wrap）
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
         call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
         
-        ! 步骤 2：更新 UUL
+        ! 步骤 3：更新 UUL（使用可能更新后的 σ）
         call Op_K%mmult_L(PropU%UUL, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropD%UUL, Latt, NsigL_K%sigma, nt, 1)
         
@@ -539,36 +542,34 @@ contains
 
     subroutine LocalK_prop_R(PropU, PropD, iseed, nt)
         ! 向右扫描时的传播：从 τ-1 到 τ
-        ! 使用棋盘分解
         ! 
-        ! 这是进行 metro 更新的正确位置：
-        ! 1. 首先用旧的 σ 做 wrap G（从 τ-1 到 τ）
-        ! 2. 然后尝试翻转 σ，用 Sherman-Morrison 更新 Gr
-        ! 3. 最后用新的 σ 更新 UUR
-        ! 这样 UUR 始终反映最新的 σ，Wrap_R 存储的也是最新的。
+        ! 重要：棋盘分解只用于 wrap（提高 Trotter 精度），
+        ! 但 metro 更新必须逐个 bond 进行（保证 Sherman-Morrison 正确）。
+        ! 
+        ! 原因：棋盘分解中 B(τ) = B_4 * B_3 * B_2 * B_1，不同组共享格点时不对易。
+        ! Sherman-Morrison 假设翻转单个 bond 时 ΔB 是 rank-2，
+        ! 但在棋盘分解后，需要考虑其他组的影响，这使得公式复杂化。
+        ! 
+        ! 解决方案：逐个 bond 做 metro 更新，每次翻转后立即更新 Gr。
+        ! 这样每次 Sherman-Morrison 都是针对单个 bond 的变化。
         class(Propagator), intent(inout) :: PropU, PropD
         integer, intent(inout) :: iseed
         integer, intent(in) :: nt
+        integer :: ii
         
-        ! 步骤 1：wrap G（使用棋盘分解的 mmult）
-        ! 这里使用当前的 σ（可能是旧的，因为 metro 还没做）
+        ! 步骤 1：wrap G（使用棋盘分解，提高 Trotter 精度）
         call Op_K%mmult_R(PropU%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropD%Gr, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_L(PropU%Gr, Latt, NsigL_K%sigma, nt, -1)
         call Op_K%mmult_L(PropD%Gr, Latt, NsigL_K%sigma, nt, -1)
         
-        ! 步骤 2：对所有 group 做 metro 更新
-        ! 顺序：group_1 -> group_2 -> group_3 -> group_4（与 mmult_R 一致）
-        ! 这会尝试翻转 σ(nt)，如果接受：
-        !   - Gr 通过 Sherman-Morrison 更新
-        !   - NsigL_K%sigma(ii, nt) 被翻转
-        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_1, nt)
-        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_2, nt)
-        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_3, nt)
-        call LocalK_metro_group(PropU%Gr, PropD%Gr, iseed, Latt%group_4, nt)
+        ! 步骤 2：逐个 bond 做 metro 更新（不使用棋盘分解）
+        ! 临时禁用 metro 更新以测试 wrap
+        ! do ii = 1, 2*Lq
+        !     call LocalK_metro(PropU%Gr, PropD%Gr, iseed, ii, nt)
+        ! enddo
         
-        ! 步骤 3：更新 UUR
-        ! 使用新的 σ（如果步骤 2 中有翻转）
+        ! 步骤 3：更新 UUR（使用可能更新后的 σ）
         call Op_K%mmult_R(PropU%UUR, Latt, NsigL_K%sigma, nt, 1)
         call Op_K%mmult_R(PropD%UUR, Latt, NsigL_K%sigma, nt, 1)
         
