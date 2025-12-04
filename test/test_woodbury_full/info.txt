@@ -4,16 +4,24 @@
  晶格 y 方向长度 Ly          :           6
  跃迁系数 t                  :   1.5000000000000000     
  规范场耦合系数 J            :  0.29999999999999999     
- 规范场横场强度 h            :  0.10000000000000001     
+ 规范场横场强度 h            :  0.20000000000000001     
  化学势 mu                   :   0.0000000000000000     
  所选取的规范扇区 Q          :  -1.0000000000000000     
  全局更新频率 Nglobal          :           5
  选择的初始化场构型方式 absolute :           1
- 逆温度 Beta                   :   20.000000000000000     
- 虚时长度 Ltrot                :         400
+ 逆温度 Beta                   :   2.0000000000000000     
+ 虚时长度 Ltrot                :          40
  => Dtau = Beta / Ltrot      :   5.0000000000000003E-002
- 稳定化频率 Nwrap              :          10
- # Bins                       :           5
- 来回扫的更新次数 Nsweep        :           5
+ 稳定化频率 Nwrap              :           4
+ # Bins                       :          10
+ 来回扫的更新次数 Nsweep        :          10
  # No. of MPI processes       :           1
  ==============================================
+ Skipping Bosonic warm-up
+ Average size of Wolff cluster                  :   30.820000000000000     
+ Accept_Kglobal                                 :  0.65999999999999992     
+ Accept_Klocal_shift                            :   5.4697916666666666E-002
+ Accept_lambda_local                            :  0.40000000000000002     
+ Max diff Matrix                                :   4.1001522923383993E-013
+ Mean diff Matrix                               :                       NaN
+ Tot CPU time                                   :   9.5574237300000000     
