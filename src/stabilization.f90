@@ -1,6 +1,7 @@
 module Stabilize_mod
     use ProcessMatrix
     use MyMats
+    use MyLattice, only: ZKRON
     use DQMC_Model_mod      ! 引入 NsigL_K%lambda，用于在构造 Green 时插入 P_lambda
     implicit none
     
@@ -541,7 +542,7 @@ contains
         character(len=*), optional, intent(in) :: flag
 ! Local: 
         complex(kind=8), dimension(Ndim, Ndim) :: Gr
-        integer :: nt_st
+        integer :: nt_st, ii
         real(kind=8) :: dif
         if (mod(nt, Nwrap) .ne. 0 .and. nt .ne. 0) then
             write(6,*) "incorrect ortholeft time slice, NT = ", nt; stop
@@ -551,10 +552,15 @@ contains
         Prop%UUR(1:Ndim, 1:Ndim) = WrList%URlist(1:Ndim, 1:Ndim, nt_st)
         Prop%VUR(1:Ndim, 1:Ndim) = WrList%VRlist(1:Ndim, 1:Ndim, nt_st)
         Prop%DUR(1:Ndim) = WrList%DRlist(1:Ndim, nt_st)
-        if (nt == 0) then ! clear URlist
-            WrList%URlist = dcmplx(0.d0, 0.d0)
-            WrList%VRlist = dcmplx(0.d0, 0.d0)
-            WrList%DRlist = dcmplx(0.d0, 0.d0)
+        if (nt == 0) then ! reset URlist to identity/D=1 for next sweep_R
+            ! 重新初始化为单位矩阵和 D=1，而不是清空为 0
+            ! 这确保在 sweep_L 结束后，如果有 global update 访问 URlist，
+            ! 它们是有效的值
+            do ii = 0, Nst
+                WrList%URlist(:,:,ii) = ZKRON
+                WrList%VRlist(:,:,ii) = ZKRON
+                WrList%DRlist(:,ii) = dcmplx(1.d0, 0.d0)
+            enddo
         endif
         if (nt .ne. Ltrot) then
             call stab_UL(Prop)
@@ -598,7 +604,7 @@ contains
         character(len=*), optional, intent(in) :: flag
 ! Local: 
         complex(kind=8), dimension(Ndim, Ndim) :: Gr
-        integer :: nt_st
+        integer :: nt_st, ii
         real(kind=8) :: dif
         if (mod(nt, Nwrap) .ne. 0 .and. nt .ne. 0) then
             write(6,*) "incorrect orthoright time slice, NT = ", nt; stop
@@ -609,9 +615,14 @@ contains
         Prop%VUL(1:Ndim, 1:Ndim) = WrList%VLlist(1:Ndim, 1:Ndim, nt_st)
         Prop%DUL(1:Ndim) = WrList%DLlist(1:Ndim, nt_st)
         if (nt == Ltrot) then
-            WrList%ULlist = dcmplx(0.d0, 0.d0)
-            WrList%VLlist = dcmplx(0.d0, 0.d0)
-            WrList%DLlist = dcmplx(0.d0, 0.d0)
+            ! 清空 ULlist，但重新初始化为单位矩阵和 D=1
+            ! 这确保在下一次 sweep_L 之前，如果有 global update 访问 ULlist，
+            ! 它们是有效的值（而不是 0）
+            do ii = 0, Nst
+                WrList%ULlist(:,:,ii) = ZKRON
+                WrList%VLlist(:,:,ii) = ZKRON
+                WrList%DLlist(:,ii) = dcmplx(1.d0, 0.d0)
+            enddo
         endif
         if (nt .ne. 0) then
             call stab_UR(Prop)

@@ -253,6 +253,19 @@ contains
         
         log_ratio_fermion = 0.d0
         call this%flip(iseed, size_cluster, log_ratio_space)
+        
+        ! 调试：检查 ULlist 是否正确
+        if (all(abs(this%wrU%DLlist(:, Ltrot/Nwrap)) < 1.d-14)) then
+            write(6,*) "ERROR: DLlist[Ltrot/Nwrap] is all zero before Wrap_L in Global_sweep_L"
+            ! 紧急修复：设为 1
+            this%wrU%DLlist(:, Ltrot/Nwrap) = dcmplx(1.d0, 0.d0)
+            this%wrD%DLlist(:, Ltrot/Nwrap) = dcmplx(1.d0, 0.d0)
+            this%wrU%ULlist(:,:, Ltrot/Nwrap) = ZKRON
+            this%wrD%ULlist(:,:, Ltrot/Nwrap) = ZKRON
+            this%wrU%VLlist(:,:, Ltrot/Nwrap) = ZKRON
+            this%wrD%VLlist(:,:, Ltrot/Nwrap) = ZKRON
+        endif
+        
         ! 初始化 G(τ=Ltrot)：使用 Wrap_L 从 WrList 重建
         call Wrap_L(this%propU, this%wrU, Ltrot)
         call Wrap_L(this%propD, this%wrD, Ltrot)
@@ -260,11 +273,34 @@ contains
         ! 检查初始 G 是否有效
         if (any(isnan(real(this%propU%Gr))) .or. any(isnan(real(this%propD%Gr)))) then
             write(6,*) "WARNING: NaN in G after Wrap_L(Ltrot) in Global_sweep_L"
+            ! NaN 发生，拒绝此次 global update，重建稳定化链
+            call Acc_Kg%count(.false.)
+            sigma_new = NsigL_K%sigma
+            call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
+            ! 同步 this%wrU/D 和 this%propU/D
+            call this%wrU%asgn(WrU); call this%wrD%asgn(WrD)
+            call this%propU%asgn(PropU); call this%propD%asgn(PropD)
+            is_beta = .false.
+            return
         endif
         
         do nt = Ltrot, 1, -1
             call propT_L(this%propU, this%propD, NsigL_K%lambda, nt)
             call GlobalK_prop_L(this%propU, this%propD, log_ratio_fermion, sigma_new, nt)
+            
+            ! 检查每个时间片后的 G - 如果发生 NaN，立即拒绝更新
+            if (any(isnan(real(this%propU%Gr))) .or. any(isnan(real(this%propD%Gr)))) then
+                ! NaN 发生，拒绝此次 global update，重建稳定化链
+                call Acc_Kg%count(.false.)
+                sigma_new = NsigL_K%sigma
+                call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
+                ! 同步 this%wrU/D 和 this%propU/D
+                call this%wrU%asgn(WrU); call this%wrD%asgn(WrD)
+                call this%propU%asgn(PropU); call this%propD%asgn(PropD)
+                is_beta = .false.
+                return
+            endif
+            
             if (mod(nt-1, Nwrap) == 0 .and. nt > 1) then
                 ! 在 global update 中，只存储 UUL，不重建 G
                 ! 因为 G 已经通过 Woodbury 更新，而 WrList.URlist 仍然是基于原始 sigma
@@ -307,21 +343,50 @@ contains
         
         log_ratio_fermion = 0.d0
         call this%flip(iseed, size_cluster, log_ratio_space)
+        
+        ! 调试：检查 ULlist[0] 是否正确
+        if (all(abs(this%wrU%DLlist(:, 0)) < 1.d-14)) then
+            write(6,*) "ERROR: DLlist[0] is all zero before Wrap_R in Global_sweep_R"
+            ! 紧急修复：设为 1
+            this%wrU%DLlist(:, 0) = dcmplx(1.d0, 0.d0)
+            this%wrD%DLlist(:, 0) = dcmplx(1.d0, 0.d0)
+            this%wrU%ULlist(:,:, 0) = ZKRON
+            this%wrD%ULlist(:,:, 0) = ZKRON
+            this%wrU%VLlist(:,:, 0) = ZKRON
+            this%wrD%VLlist(:,:, 0) = ZKRON
+        endif
+        
         call Wrap_R(this%propU, this%wrU, 0)
         call Wrap_R(this%propD, this%wrD, 0)
         
         ! 检查初始 G 是否有效
         if (any(isnan(real(this%propU%Gr))) .or. any(isnan(real(this%propD%Gr)))) then
             write(6,*) "WARNING: NaN in G after Wrap_R(0) in Global_sweep_R"
+            ! NaN 发生，拒绝此次 global update，重建稳定化链
+            call Acc_Kg%count(.false.)
+            sigma_new = NsigL_K%sigma
+            call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
+            ! 同步 this%wrU/D 和 this%propU/D
+            call this%wrU%asgn(WrU); call this%wrD%asgn(WrD)
+            call this%propU%asgn(PropU); call this%propD%asgn(PropD)
+            is_beta = .true.
+            return
         endif
         
         do nt = 1, Ltrot
             call GlobalK_prop_R(this%propU, this%propD, log_ratio_fermion, sigma_new, nt)
             
-            ! 检查每个时间片后的 G
+            ! 检查每个时间片后的 G - 如果发生 NaN，立即拒绝更新
             if (any(isnan(real(this%propU%Gr))) .or. any(isnan(real(this%propD%Gr)))) then
-                write(6,*) "WARNING: NaN in G after GlobalK_prop_R at nt=", nt
-                exit
+                ! NaN 发生，拒绝此次 global update，重建稳定化链
+                call Acc_Kg%count(.false.)
+                sigma_new = NsigL_K%sigma
+                call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
+                ! 同步 this%wrU/D 和 this%propU/D
+                call this%wrU%asgn(WrU); call this%wrD%asgn(WrD)
+                call this%propU%asgn(PropU); call this%propD%asgn(PropD)
+                is_beta = .true.
+                return
             endif
             call propT_R(this%propU, this%propD, NsigL_K%lambda, nt)
             if (mod(nt, Nwrap) == 0) then
@@ -384,16 +449,13 @@ contains
         class(WrapList),   intent(inout) :: WrU, WrD
         integer :: nt
         
-        ! 检查输入 PropU%Gr 是否有 NaN
-        if (any(isnan(real(PropU%Gr))) .or. any(isnan(real(PropD%Gr)))) then
-            write(6,*) "WARNING: NaN in PropU/D%Gr before rebuild_stabilization_chain"
-        endif
-        
         ! 重置 Propagator 的 UDV 分解（与 Prop_make 一致：UUR/VUR 为单位矩阵，DUR 为 1）
         PropU%UUR = ZKRON; PropU%VUR = ZKRON; PropU%DUR = dcmplx(1.d0, 0.d0)
         PropU%UUL = ZKRON; PropU%VUL = ZKRON; PropU%DUL = dcmplx(1.d0, 0.d0)
+        PropU%Gr = ZKRON  ! 重置 Green 函数
         PropD%UUR = ZKRON; PropD%VUR = ZKRON; PropD%DUR = dcmplx(1.d0, 0.d0)
         PropD%UUL = ZKRON; PropD%VUL = ZKRON; PropD%DUL = dcmplx(1.d0, 0.d0)
+        PropD%Gr = ZKRON  ! 重置 Green 函数
         
         ! 清除 WrapList（与 Wrlist_make 一致）
         WrU%URlist = dcmplx(0.d0, 0.d0)
