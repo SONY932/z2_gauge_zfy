@@ -53,6 +53,7 @@ contains
         complex(kind=kind(0.d0)) :: Z
         integer :: info, i, j
         real(kind=kind(0.d0)) :: X
+        real(kind=kind(0.d0)), parameter :: tiny_val = 1.d-100
 ! Query optimal amount of memory
         call ZGEQP3(Ndim, Ndim, Mat, Ndim, IPVT, TAU(1), Z, -1, RWORK(1), info)
         Lwork = int(dble(Z)); allocate(WORK(Lwork))
@@ -60,7 +61,12 @@ contains
         call ZGEQP3(Ndim, Ndim, Mat, Ndim, IPVT, TAU(1), WORK(1), Lwork, RWORK(1), info)
 ! separate off D
         do i = 1, Ndim
-            X = abs(Mat(i, i)); D(i) = X ! plain diagonal entry
+            X = abs(Mat(i, i))
+            ! 保护：避免除以 0
+            if (X < tiny_val) then
+                X = tiny_val
+            endif
+            D(i) = X ! plain diagonal entry
             do j = i, Ndim
                 Mat(i, j) = Mat(i, j) / X
             enddo
@@ -133,6 +139,7 @@ contains
         complex(kind=8), dimension(:), allocatable :: WORK
         complex(kind=kind(0.d0)) :: Z
         integer :: nl, nr, Lwork, info
+        
 ! coefficient of zgemm: alpha * op(A) * op(B) + beta * op(C); here alpha=Z_one=1, beta=0
 ! VRVL = VR*VL
         call mmult(VRVL, Prop%VUR, Prop%VUL)
@@ -156,6 +163,13 @@ contains
         IPVT = 0
         call QDRP_decompose(matUDV, DUP, IPVT, TAU, WORK, Lwork)
         
+        ! 检查 DUP 是否有接近 0 的元素
+        do nl = 1, Ndim
+            if (abs(DUP(nl)) < 1.d-100) then
+                ! 设置为一个小的非零值以避免除以 0
+                DUP(nl) = dcmplx(1.d-100, 0.d0)
+            endif
+        enddo
         
         if (nt < Ltrot/2 + 1) then ! ntau < Ltrot/2
 ! UR U D V P^dagger UL G = 1 => 
