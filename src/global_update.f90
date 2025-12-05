@@ -255,6 +255,10 @@ contains
         log_ratio_fermion = 0.d0
         sigma_curr = NsigL_K%sigma
         call this%flip(iseed, size_cluster, log_ratio_space)
+        ! 先用提出的 sigma_new 重建内部稳定化链，避免旧 ULlist/URlist 失配
+        call rebuild_stabilization_chain(this%propU, this%propD, this%wrU, this%wrD, sigma_new)
+        ! 先用提出的 sigma_new 重建内部稳定化链，避免旧 ULlist/URlist 失配
+        call rebuild_stabilization_chain(this%propU, this%propD, this%wrU, this%wrD, sigma_new)
         
         ! 按照 CodeXun 的顺序：先 Wrap_L，再 propT_L，再 GlobalK_prop_L
         ! 这样 Wrap_L 会在每个 Nwrap 间隔重建 Green 函数，消除累积误差
@@ -363,12 +367,13 @@ contains
         return
     end subroutine Global_sweep
     
-    subroutine rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
+    subroutine rebuild_stabilization_chain(PropU, PropD, WrU, WrD, sigma_in)
         ! 重新准备稳定化链
         ! 在 global update 被接受后调用，确保 WrList 中的 UDV 分解与当前 sigma 一致
         ! 完全按照 Local_sweep_pre 的方式进行初始化
         class(Propagator), intent(inout) :: PropU, PropD
         class(WrapList),   intent(inout) :: WrU, WrD
+        real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma_in
         integer :: nt
         
         ! 重置 Propagator 的 UDV 分解（与 Prop_make 一致：UUR/VUR 为单位矩阵，DUR 为 1）
@@ -401,7 +406,7 @@ contains
         call Wrap_pre(PropU, WrU, 0)
         call Wrap_pre(PropD, WrD, 0)
         do nt = 1, Ltrot
-            if (RT > Zero) call propK_pre(PropU, PropD, NsigL_K%sigma, nt)
+            if (RT > Zero) call propK_pre(PropU, PropD, sigma_in, nt)
             call propT_pre(PropU, PropD, NsigL_K%lambda, nt)
             if (mod(nt, Nwrap) == 0) then
                 call Wrap_pre(PropU, WrU, nt)
