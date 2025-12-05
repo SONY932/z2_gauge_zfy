@@ -473,6 +473,14 @@ contains
         return
     end subroutine apply_lambda_projection
 
+    ! 对外提供 stab_green_big 的结果输出，避免直接访问内部 Gr_tmp
+    subroutine stab_green_big_out(Prop, Gr_out)
+        class(Propagator), intent(in) :: Prop
+        complex(kind=8), dimension(Ndim, Ndim), intent(out) :: Gr_out
+        call stab_green_big(Prop)
+        Gr_out = Gr_tmp%Gr00
+    end subroutine stab_green_big_out
+
     !------------------------------------------------------------------
     ! 通用的 Ndim×Ndim 复矩阵求逆封装：调用 LAPACK ZGETRF/ZGETRI。
     ! 输入：A (被覆盖为 A^{-1})；输出：info (0 表示成功)。
