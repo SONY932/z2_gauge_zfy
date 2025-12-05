@@ -657,14 +657,10 @@ contains
         Prop%VUL(1:Ndim, 1:Ndim) = WrList%VLlist(1:Ndim, 1:Ndim, nt_st)
         Prop%DUL(1:Ndim) = WrList%DLlist(1:Ndim, nt_st)
         if (nt == Ltrot) then
-            ! 清空 ULlist，但重新初始化为单位矩阵和 D=1
-            ! 这确保在下一次 sweep_L 之前，如果有 global update 访问 ULlist，
-            ! 它们是有效的值（而不是 0）
-            do ii = 0, Nst
-                WrList%ULlist(:,:,ii) = ZKRON
-                WrList%VLlist(:,:,ii) = ZKRON
-                WrList%DLlist(:,ii) = dcmplx(1.d0, 0.d0)
-            enddo
+            ! 右扫结束后清空左向存储，避免下次右扫沿用过期 UL 因子
+            WrList%ULlist = dcmplx(0.d0, 0.d0)
+            WrList%VLlist = dcmplx(0.d0, 0.d0)
+            WrList%DLlist = dcmplx(0.d0, 0.d0)
         endif
         if (nt .ne. 0) then
             call stab_UR(Prop)

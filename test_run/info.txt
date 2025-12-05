@@ -17,26 +17,3 @@
  来回扫的更新次数 Nsweep        :           1
  # No. of MPI processes       :           1
  ==============================================
- Skipping Bosonic warm-up
- Progress           20 : Accept_Klocal_shift:    1.4609375000000003E-002
- Progress           20 : Accept_lambda_local:   0.10625000000000000     
- Progress           20 : Accept_Kglobal:   0.23749999999999999     
- Progress           40 : Accept_Klocal_shift:    1.4101562499999998E-002
- Progress           40 : Accept_lambda_local:    7.9687499999999994E-002
- Progress           40 : Accept_Kglobal:   0.16875000000000001     
- Progress           60 : Accept_Klocal_shift:    1.4348958333333332E-002
- Progress           60 : Accept_lambda_local:    7.0833333333333331E-002
- Progress           60 : Accept_Kglobal:   0.14999999999999999     
- Progress           80 : Accept_Klocal_shift:    1.2583007812500000E-002
- Progress           80 : Accept_lambda_local:    7.1093749999999997E-002
- Progress           80 : Accept_Kglobal:   0.11250000000000000     
- Progress          100 : Accept_Klocal_shift:    1.2480468749999999E-002
- Progress          100 : Accept_lambda_local:    5.9999999999999998E-002
- Progress          100 : Accept_Kglobal:   0.10000000000000001     
- Average size of Wolff cluster                  :   32.975000000000001     
- Accept_Kglobal                                 :  0.10000000000000001     
- Accept_Klocal_shift                            :   1.2480468749999999E-002
- Accept_lambda_local                            :   5.9999999999999998E-002
- Max diff Matrix                                :   10.540811054408550     
- Mean diff Matrix                               :   2.2851556152307499     
- Tot CPU time                                   :   59.220949140000002     
