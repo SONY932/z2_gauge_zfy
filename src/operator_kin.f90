@@ -1,6 +1,7 @@
 module OperatorKin_mod
     use MyLattice
     use calc_basic
+    use, intrinsic :: ieee_arithmetic
     implicit none
     public
 
@@ -20,7 +21,28 @@ module OperatorKin_mod
         procedure :: mmult_L_group => opK_mmult_L_group
     end type OperatorKin
 
+    real(kind=8), parameter :: HYPER_LIMIT = 40.d0
+    logical :: hyper_warned = .false.
+
 contains
+    subroutine safe_cosh_sinh(arg, Cv, Sv)
+        real(kind=8), intent(in)  :: arg
+        real(kind=8), intent(out) :: Cv, Sv
+        real(kind=8) :: arg_clamped
+
+        arg_clamped = arg
+        if (abs(arg_clamped) > HYPER_LIMIT) then
+            arg_clamped = sign(HYPER_LIMIT, arg_clamped)
+            if (.not. hyper_warned) then
+                write(6,*) "WARNING: opK cosh/sinh argument clipped:", arg, "->", arg_clamped
+                hyper_warned = .true.
+            endif
+        endif
+
+        Cv = cosh(arg_clamped)
+        Sv = sinh(arg_clamped)
+    end subroutine safe_cosh_sinh
+
     subroutine opK_set(this)
         class(OperatorKin), intent(inout) :: this
         ! 标准棋盘分解：每个 group 操作一次，使用完整步长
@@ -34,8 +56,7 @@ contains
         class(OperatorKin), intent(inout) :: this
         integer, intent(in) :: nflag
         real(kind = 8), intent(in) :: sigma
-        this%entryC = cosh( nflag * this%alpha * sigma )
-        this%entryS = sinh( nflag * this%alpha * sigma )
+        call safe_cosh_sinh(nflag * this%alpha * sigma, this%entryC, this%entryS)
         return
     end subroutine opK_get_exp
 
@@ -46,10 +67,8 @@ contains
         real(kind = 8), intent(in) :: sigma_old, sigma_new
         real(kind = 8) :: C_new, C_old, S_new, S_old
 
-        C_new = cosh( this%alpha_2 * sigma_new )
-        C_old = cosh( this%alpha_2 * sigma_old )
-        S_new = sinh( this%alpha_2 * sigma_new )
-        S_old = sinh( this%alpha_2 * sigma_old )
+        call safe_cosh_sinh(this%alpha_2 * sigma_new, C_new, S_new)
+        call safe_cosh_sinh(this%alpha_2 * sigma_old, C_old, S_old)
         
         ! Delta = exp(+alpha*sigma_new) * exp(-alpha*sigma_old) - I
         ! Note: sinh is odd function, so exp(-alpha*sigma_old) has -S_old entries

@@ -5,6 +5,7 @@ module LocalK_mod
     use MyLattice
     use calc_basic
     use Fields_mod, only: gauss_boson_ratio_lambda, gauss_boson_ratio_sigma
+    use, intrinsic :: ieee_arithmetic
     implicit none
 
     public
@@ -17,11 +18,32 @@ module LocalK_mod
     type(AccCounter) :: Acc_Kl, Acc_Kt, Acc_lambda
     real(kind = 8), dimension(:, :), allocatable :: sigma_new
     real(kind = 8), dimension(:), allocatable :: lambda_new
+    real(kind=8), parameter :: HYPER_LIMIT = 40.d0
+    logical :: hyper_warned_localk = .false.
     
     ! λ = -1 的格点数量（用于 λ 全局更新的统计）
     integer :: n_lambda_minus
 
 contains
+    subroutine safe_cosh_sinh(arg, Cv, Sv, context)
+        real(kind=8), intent(in) :: arg
+        real(kind=8), intent(out) :: Cv, Sv
+        character(len=*), intent(in) :: context
+        real(kind=8) :: arg_clamped
+
+        arg_clamped = arg
+        if (abs(arg_clamped) > HYPER_LIMIT) then
+            arg_clamped = sign(HYPER_LIMIT, arg_clamped)
+            if (.not. hyper_warned_localk) then
+                write(6,*) "WARNING: ", trim(context), " cosh/sinh arg clipped:", arg, "->", arg_clamped
+                hyper_warned_localk = .true.
+            endif
+        endif
+
+        Cv = cosh(arg_clamped)
+        Sv = sinh(arg_clamped)
+    end subroutine safe_cosh_sinh
+
     subroutine LocalK_init()
         call Acc_Kl%init()
         call Acc_Kt%init()
@@ -489,10 +511,8 @@ contains
         ! ΔE = E_new - E_old
         block
             real(kind=8) :: C_new, S_new_val, C_old, S_old_val
-            C_new = cosh(Op_K%alpha * S_new)
-            S_new_val = sinh(Op_K%alpha * S_new)
-            C_old = cosh(Op_K%alpha * S_old)
-            S_old_val = sinh(Op_K%alpha * S_old)
+            call safe_cosh_sinh(Op_K%alpha * S_new, C_new, S_new_val, "LocalK ΔE new")
+            call safe_cosh_sinh(Op_K%alpha * S_old, C_old, S_old_val, "LocalK ΔE old")
             Delta_local(1, 1) = C_new - C_old
             Delta_local(1, 2) = S_new_val - S_old_val
             Delta_local(2, 1) = S_new_val - S_old_val
@@ -527,8 +547,7 @@ contains
 
         ! 然后左乘 B_k^{-1}([i,j], [i,j])
         ! B_k^{-1} = exp(-α σ_b)
-        Cv_inv = cosh(-Op_K%alpha * S_old)
-        Sv_inv = sinh(-Op_K%alpha * S_old)
+        call safe_cosh_sinh(-Op_K%alpha * S_old, Cv_inv, Sv_inv, "LocalK Bk_inv")
         Bk_inv_2x2(1, 1) = dcmplx(Cv_inv, 0.d0)
         Bk_inv_2x2(1, 2) = dcmplx(Sv_inv, 0.d0)
         Bk_inv_2x2(2, 1) = dcmplx(Sv_inv, 0.d0)
@@ -729,8 +748,7 @@ contains
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
-                Cv = cosh(Op_K%alpha * sig)
-                Sv = sinh(Op_K%alpha * sig)
+                call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK cols grp1")
                 do jj = 1, 2
                     t1 = Cv * cols(s1, jj) + Sv * cols(s2, jj)
                     t2 = Sv * cols(s1, jj) + Cv * cols(s2, jj)
@@ -745,8 +763,7 @@ contains
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
-                Cv = cosh(Op_K%alpha * sig)
-                Sv = sinh(Op_K%alpha * sig)
+                call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK cols grp2")
                 do jj = 1, 2
                     t1 = Cv * cols(s1, jj) + Sv * cols(s2, jj)
                     t2 = Sv * cols(s1, jj) + Cv * cols(s2, jj)
@@ -761,8 +778,7 @@ contains
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
-                Cv = cosh(Op_K%alpha * sig)
-                Sv = sinh(Op_K%alpha * sig)
+                call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK cols grp3")
                 do jj = 1, 2
                     t1 = Cv * cols(s1, jj) + Sv * cols(s2, jj)
                     t2 = Sv * cols(s1, jj) + Cv * cols(s2, jj)
@@ -777,8 +793,7 @@ contains
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
-                Cv = cosh(Op_K%alpha * sig)
-                Sv = sinh(Op_K%alpha * sig)
+                call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK cols grp4")
                 do jj = 1, 2
                     t1 = Cv * cols(s1, jj) + Sv * cols(s2, jj)
                     t2 = Sv * cols(s1, jj) + Cv * cols(s2, jj)
@@ -805,8 +820,7 @@ contains
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
-                Cv = cosh(Op_K%alpha * sig)
-                Sv = sinh(Op_K%alpha * sig)
+                call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK rows grp1")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
                     t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
@@ -821,8 +835,7 @@ contains
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
-                Cv = cosh(Op_K%alpha * sig)
-                Sv = sinh(Op_K%alpha * sig)
+                call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK rows grp2")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
                     t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
@@ -837,8 +850,7 @@ contains
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
-                Cv = cosh(Op_K%alpha * sig)
-                Sv = sinh(Op_K%alpha * sig)
+                call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK rows grp3")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
                     t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
@@ -853,8 +865,7 @@ contains
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
-                Cv = cosh(Op_K%alpha * sig)
-                Sv = sinh(Op_K%alpha * sig)
+                call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK rows grp4")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
                     t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
@@ -883,8 +894,7 @@ contains
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
                 ! 使用 -α σ 来得到逆矩阵
-                Cv = cosh(-Op_K%alpha * sig)
-                Sv = sinh(-Op_K%alpha * sig)
+                call safe_cosh_sinh(-Op_K%alpha * sig, Cv, Sv, "LocalK rows_inv grp1")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
                     t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
@@ -899,8 +909,7 @@ contains
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
-                Cv = cosh(-Op_K%alpha * sig)
-                Sv = sinh(-Op_K%alpha * sig)
+                call safe_cosh_sinh(-Op_K%alpha * sig, Cv, Sv, "LocalK rows_inv grp2")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
                     t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
@@ -915,8 +924,7 @@ contains
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
-                Cv = cosh(-Op_K%alpha * sig)
-                Sv = sinh(-Op_K%alpha * sig)
+                call safe_cosh_sinh(-Op_K%alpha * sig, Cv, Sv, "LocalK rows_inv grp3")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
                     t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
@@ -931,8 +939,7 @@ contains
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
                 sig = NsigL_K%sigma(bond_no, nt)
-                Cv = cosh(-Op_K%alpha * sig)
-                Sv = sinh(-Op_K%alpha * sig)
+                call safe_cosh_sinh(-Op_K%alpha * sig, Cv, Sv, "LocalK rows_inv grp4")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
                     t2 = rows(jj, s1) * Sv + rows(jj, s2) * Cv
