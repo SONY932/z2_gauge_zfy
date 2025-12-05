@@ -254,74 +254,31 @@ contains
         log_ratio_fermion = 0.d0
         call this%flip(iseed, size_cluster, log_ratio_space)
         
-        ! 调试：检查 ULlist 是否正确
-        if (all(abs(this%wrU%DLlist(:, Ltrot/Nwrap)) < 1.d-14)) then
-            write(6,*) "ERROR: DLlist[Ltrot/Nwrap] is all zero before Wrap_L in Global_sweep_L"
-            ! 紧急修复：设为 1
-            this%wrU%DLlist(:, Ltrot/Nwrap) = dcmplx(1.d0, 0.d0)
-            this%wrD%DLlist(:, Ltrot/Nwrap) = dcmplx(1.d0, 0.d0)
-            this%wrU%ULlist(:,:, Ltrot/Nwrap) = ZKRON
-            this%wrD%ULlist(:,:, Ltrot/Nwrap) = ZKRON
-            this%wrU%VLlist(:,:, Ltrot/Nwrap) = ZKRON
-            this%wrD%VLlist(:,:, Ltrot/Nwrap) = ZKRON
-        endif
-        
-        ! 初始化 G(τ=Ltrot)：使用 Wrap_L 从 WrList 重建
-        call Wrap_L(this%propU, this%wrU, Ltrot)
-        call Wrap_L(this%propD, this%wrD, Ltrot)
-        
-        ! 检查初始 G 是否有效
-        if (any(isnan(real(this%propU%Gr))) .or. any(isnan(real(this%propD%Gr)))) then
-            write(6,*) "WARNING: NaN in G after Wrap_L(Ltrot) in Global_sweep_L"
-            ! NaN 发生，拒绝此次 global update，重建稳定化链
-            call Acc_Kg%count(.false.)
-            sigma_new = NsigL_K%sigma
-            call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
-            ! 同步 this%wrU/D 和 this%propU/D
-            call this%wrU%asgn(WrU); call this%wrD%asgn(WrD)
-            call this%propU%asgn(PropU); call this%propD%asgn(PropD)
-            is_beta = .false.
-            return
-        endif
-        
+        ! 按照 CodeXun 的顺序：先 Wrap_L，再 propT_L，再 GlobalK_prop_L
+        ! 这样 Wrap_L 会在每个 Nwrap 间隔重建 Green 函数，消除累积误差
         do nt = Ltrot, 1, -1
+            if (mod(nt, Nwrap) == 0) then
+                call Wrap_L(this%propU, this%wrU, nt)
+                call Wrap_L(this%propD, this%wrD, nt)
+            endif
             call propT_L(this%propU, this%propD, NsigL_K%lambda, nt)
             call GlobalK_prop_L(this%propU, this%propD, log_ratio_fermion, sigma_new, nt)
-            
-            ! 检查每个时间片后的 G - 如果发生 NaN，立即拒绝更新
-            if (any(isnan(real(this%propU%Gr))) .or. any(isnan(real(this%propD%Gr)))) then
-                ! NaN 发生，拒绝此次 global update，重建稳定化链
-                call Acc_Kg%count(.false.)
-                sigma_new = NsigL_K%sigma
-                call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
-                ! 同步 this%wrU/D 和 this%propU/D
-                call this%wrU%asgn(WrU); call this%wrD%asgn(WrD)
-                call this%propU%asgn(PropU); call this%propD%asgn(PropD)
-                is_beta = .false.
-                return
-            endif
-            
-            if (mod(nt-1, Nwrap) == 0 .and. nt > 1) then
-                ! 在 global update 中，只存储 UUL，不重建 G
-                ! 因为 G 已经通过 Woodbury 更新，而 WrList.URlist 仍然是基于原始 sigma
-                call Wrap_L_store(this%propU, this%wrU, nt-1)
-                call Wrap_L_store(this%propD, this%wrD, nt-1)
-            endif
         enddo
-        call Wrap_L_store(this%propU, this%wrU, 0)
-        call Wrap_L_store(this%propD, this%wrD, 0)
+        call Wrap_L(this%propU, this%wrU, 0)
+        call Wrap_L(this%propD, this%wrD, 0)
         log_ratio_total = log_ratio_fermion + log_ratio_space
         random = ranf(iseed)
         if (min(0.d0, log_ratio_total) .ge. log(max(random, RATIO_EPS))) then
             call Acc_Kg%count(.true.)
             NsigL_K%sigma = sigma_new
+            ! 接受：复制 prop 和 wrlist
             call PropU%asgn(this%propU); call PropD%asgn(this%propD)
-            ! 重新准备稳定化链，确保 WrList 中的 UDV 分解与当前 sigma 一致
-            call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
+            call WrU%asgn(this%wrU);     call WrD%asgn(this%wrD)
             is_beta = .false.
         else
             call Acc_Kg%count(.false.)
             sigma_new = NsigL_K%sigma
+            ! 拒绝：恢复原始 prop 和 wrlist
             call this%propU%asgn(PropU); call this%propD%asgn(PropD)
             call this%wrU%asgn(WrU);     call this%wrD%asgn(WrD)
             is_beta = .true. 
@@ -343,57 +300,17 @@ contains
         
         log_ratio_fermion = 0.d0
         call this%flip(iseed, size_cluster, log_ratio_space)
-        
-        ! 调试：检查 ULlist[0] 是否正确
-        if (all(abs(this%wrU%DLlist(:, 0)) < 1.d-14)) then
-            write(6,*) "ERROR: DLlist[0] is all zero before Wrap_R in Global_sweep_R"
-            ! 紧急修复：设为 1
-            this%wrU%DLlist(:, 0) = dcmplx(1.d0, 0.d0)
-            this%wrD%DLlist(:, 0) = dcmplx(1.d0, 0.d0)
-            this%wrU%ULlist(:,:, 0) = ZKRON
-            this%wrD%ULlist(:,:, 0) = ZKRON
-            this%wrU%VLlist(:,:, 0) = ZKRON
-            this%wrD%VLlist(:,:, 0) = ZKRON
-        endif
-        
         call Wrap_R(this%propU, this%wrU, 0)
         call Wrap_R(this%propD, this%wrD, 0)
         
-        ! 检查初始 G 是否有效
-        if (any(isnan(real(this%propU%Gr))) .or. any(isnan(real(this%propD%Gr)))) then
-            write(6,*) "WARNING: NaN in G after Wrap_R(0) in Global_sweep_R"
-            ! NaN 发生，拒绝此次 global update，重建稳定化链
-            call Acc_Kg%count(.false.)
-            sigma_new = NsigL_K%sigma
-            call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
-            ! 同步 this%wrU/D 和 this%propU/D
-            call this%wrU%asgn(WrU); call this%wrD%asgn(WrD)
-            call this%propU%asgn(PropU); call this%propD%asgn(PropD)
-            is_beta = .true.
-            return
-        endif
-        
+        ! 按照 CodeXun 的顺序：先 GlobalK_prop_R，再 propT_R，最后 Wrap_R
+        ! 这样 Wrap_R 会在每个 Nwrap 间隔重建 Green 函数，消除累积误差
         do nt = 1, Ltrot
             call GlobalK_prop_R(this%propU, this%propD, log_ratio_fermion, sigma_new, nt)
-            
-            ! 检查每个时间片后的 G - 如果发生 NaN，立即拒绝更新
-            if (any(isnan(real(this%propU%Gr))) .or. any(isnan(real(this%propD%Gr)))) then
-                ! NaN 发生，拒绝此次 global update，重建稳定化链
-                call Acc_Kg%count(.false.)
-                sigma_new = NsigL_K%sigma
-                call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
-                ! 同步 this%wrU/D 和 this%propU/D
-                call this%wrU%asgn(WrU); call this%wrD%asgn(WrD)
-                call this%propU%asgn(PropU); call this%propD%asgn(PropD)
-                is_beta = .true.
-                return
-            endif
             call propT_R(this%propU, this%propD, NsigL_K%lambda, nt)
             if (mod(nt, Nwrap) == 0) then
-                ! 在 global update 中，只存储 UUR，不重建 G
-                ! 因为 G 已经通过 Woodbury 更新，而 WrList.ULlist 仍然是基于原始 sigma
-                call Wrap_R_store(this%propU, this%wrU, nt)
-                call Wrap_R_store(this%propD, this%wrD, nt)
+                call Wrap_R(this%propU, this%wrU, nt)
+                call Wrap_R(this%propD, this%wrD, nt)
             endif
         enddo
         log_ratio_total = log_ratio_fermion + log_ratio_space
@@ -401,13 +318,14 @@ contains
         if (min(0.d0, log_ratio_total) .ge. log(max(random, RATIO_EPS))) then
             call Acc_Kg%count(.true.)
             NsigL_K%sigma = sigma_new
+            ! 接受：复制 prop 和 wrlist
             call PropU%asgn(this%propU); call PropD%asgn(this%propD)
-            ! 重新准备稳定化链，确保 WrList 中的 UDV 分解与当前 sigma 一致
-            call rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
+            call WrU%asgn(this%wrU);     call WrD%asgn(this%wrD)
             is_beta = .true.
         else
             call Acc_Kg%count(.false.)
             sigma_new = NsigL_K%sigma
+            ! 拒绝：恢复原始 prop 和 wrlist
             call this%propU%asgn(PropU); call this%propD%asgn(PropD)
             call this%wrU%asgn(WrU);     call this%wrD%asgn(WrD)
             is_beta = .false. 

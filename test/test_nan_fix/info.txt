@@ -29,21 +29,3 @@
   Therm step   400/  500 - accept ratio:   0.0573
   Therm step   500/  500 - accept ratio:   0.0473
  Thermalize Accept Ratio                        :   4.7333680555555549E-002
- Progress           20 : Accept_Klocal_shift:    9.9053819444444424E-003
- Progress           20 : Accept_lambda_local:    0.0000000000000000     
- Progress           20 : Accept_Kglobal:   0.99749999999999994     
- Progress           40 : Accept_Klocal_shift:    1.0787760416666663E-002
- Progress           40 : Accept_lambda_local:    0.0000000000000000     
- Progress           40 : Accept_Kglobal:   0.99749999999999994     
- Progress           60 : Accept_Klocal_shift:    1.1180266203703703E-002
- Progress           60 : Accept_lambda_local:    0.0000000000000000     
- Progress           60 : Accept_Kglobal:   0.99833333333333329     
- Progress           80 : Accept_Klocal_shift:    1.0991102430555556E-002
- Progress           80 : Accept_lambda_local:    0.0000000000000000     
- Progress           80 : Accept_Kglobal:   0.99875000000000003     
- Progress          100 : Accept_Klocal_shift:    1.1116493055555558E-002
- Progress          100 : Accept_lambda_local:    0.0000000000000000     
- Progress          100 : Accept_Kglobal:   0.99750000000000016     
- Progress          120 : Accept_Klocal_shift:    1.0943287037037041E-002
- Progress          120 : Accept_lambda_local:    0.0000000000000000     
- Progress          120 : Accept_Kglobal:   0.99750000000000016     
