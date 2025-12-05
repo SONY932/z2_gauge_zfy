@@ -30,13 +30,3 @@
  Progress           80 : Accept_Klocal_shift:    1.7548828124999995E-002
  Progress           80 : Accept_lambda_local:   0.61328125000000000     
  Progress           80 : Accept_Kglobal:   0.20624999999999999     
- Progress          100 : Accept_Klocal_shift:    1.6730468749999994E-002
- Progress          100 : Accept_lambda_local:   0.62000000000000000     
- Progress          100 : Accept_Kglobal:   0.18500000000000000     
- Average size of Wolff cluster                  :   32.997500000000002     
- Accept_Kglobal                                 :  0.18500000000000000     
- Accept_Klocal_shift                            :   1.6730468749999994E-002
- Accept_lambda_local                            :  0.62000000000000000     
- Max diff Matrix                                :   29.051623351406306     
- Mean diff Matrix                               :   2.7551376326854129     
- Tot CPU time                                   :   57.030491386999998     
