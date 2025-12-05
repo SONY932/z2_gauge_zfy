@@ -416,12 +416,24 @@ contains
         ! 重新准备稳定化链（与 Local_sweep_pre 完全一致）
         call Wrap_pre(PropU, WrU, 0)
         call Wrap_pre(PropD, WrD, 0)
+        WrU%ULlist(:,:,0) = PropU%UUL
+        WrU%VLlist(:,:,0) = PropU%VUL
+        WrU%DLlist(:,0)   = PropU%DUL
+        WrD%ULlist(:,:,0) = PropD%UUL
+        WrD%VLlist(:,:,0) = PropD%VUL
+        WrD%DLlist(:,0)   = PropD%DUL
         do nt = 1, Ltrot
             if (RT > Zero) call propK_pre(PropU, PropD, sigma_in, nt)
             call propT_pre(PropU, PropD, NsigL_K%lambda, nt)
             if (mod(nt, Nwrap) == 0) then
                 call Wrap_pre(PropU, WrU, nt)
                 call Wrap_pre(PropD, WrD, nt)
+                WrU%ULlist(:,:,nt/Nwrap) = PropU%UUL
+                WrU%VLlist(:,:,nt/Nwrap) = PropU%VUL
+                WrU%DLlist(:,nt/Nwrap)   = PropU%DUL
+                WrD%ULlist(:,:,nt/Nwrap) = PropD%UUL
+                WrD%VLlist(:,:,nt/Nwrap) = PropD%VUL
+                WrD%DLlist(:,nt/Nwrap)   = PropD%DUL
             endif
         enddo
         return
