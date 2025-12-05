@@ -172,6 +172,8 @@ contains
             call LocalK_prop_R(PropU, PropD, iseed, nt)
             call propT_R(PropU, PropD, NsigL_K%lambda, nt)
             if (mod(nt, Nwrap) == 0) then
+                ! sigma 已变，重建右向链以保持与当前配置一致
+                call build_Rchain(WrU, WrD)
                 call Wrap_R(PropU, WrU, nt, "S")
                 call Wrap_R(PropD, WrD, nt, "S")
             endif
