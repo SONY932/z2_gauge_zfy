@@ -330,6 +330,8 @@ contains
                 ! 同步左向因子到当前 σ：确保后续 stab_green 使用的 ULlist 与 sigma_curr 一致
                 call Wrap_L_store(this%propU, this%wrU, nt)
                 call Wrap_L_store(this%propD, this%wrD, nt)
+                ! 仅重建因子，不改当前 G：因子与 sigma_curr 对齐，避免使用过期 UL/VL
+                call rebuild_stabilization_chain_factors_only(this%propU, this%propD, this%wrU, this%wrD, sigma_curr)
             endif
         enddo
         log_ratio_total = log_ratio_fermion + log_ratio_space
@@ -438,6 +440,20 @@ contains
         enddo
         return
     end subroutine rebuild_stabilization_chain
+
+    subroutine rebuild_stabilization_chain_factors_only(PropU, PropD, WrU, WrD, sigma_in)
+        ! 重建因子和 WrList，但保持当前 G 不变
+        class(Propagator), intent(inout) :: PropU, PropD
+        class(WrapList),   intent(inout) :: WrU, WrD
+        real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma_in
+        complex(kind=8), dimension(Ndim, Ndim) :: GrU_keep, GrD_keep
+        GrU_keep = PropU%Gr
+        GrD_keep = PropD%Gr
+        call rebuild_stabilization_chain(PropU, PropD, WrU, WrD, sigma_in)
+        PropU%Gr = GrU_keep
+        PropD%Gr = GrD_keep
+        return
+    end subroutine rebuild_stabilization_chain_factors_only
 
     subroutine Global_control_print()
         include 'mpif.h'

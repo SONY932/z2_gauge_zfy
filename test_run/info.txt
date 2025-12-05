@@ -38,5 +38,5 @@
  Accept_Klocal_shift                            :   1.6730468749999994E-002
  Accept_lambda_local                            :  0.62000000000000000     
  Max diff Matrix                                :   29.051623351406306     
- Mean diff Matrix                               :   2.7950178141302549     
- Tot CPU time                                   :   48.705345864000002     
+ Mean diff Matrix                               :   2.7551376326854129     
+ Tot CPU time                                   :   57.030491386999998     
