@@ -140,6 +140,8 @@ contains
         integer :: nt
         do nt = Ltrot, 1, -1
             if (mod(nt, Nwrap) == 0) then
+                ! sigma 已被前面的局域翻转修改，重建右链以确保 Wrap_L 使用的 URlist 与当前配置一致
+                call build_Rchain(WrU, WrD)
                 call Wrap_L(PropU, WrU, nt, "S")
                 call Wrap_L(PropD, WrD, nt, "S")
             endif
