@@ -255,10 +255,9 @@ contains
         log_ratio_fermion = 0.d0
         sigma_curr = NsigL_K%sigma
         call this%flip(iseed, size_cluster, log_ratio_space)
-        ! 先用提出的 sigma_new 重建内部稳定化链，避免旧 ULlist/URlist 失配
+        ! 用提出的 sigma_new 重建内部稳定化链，避免旧 ULlist/URlist 失配
         call rebuild_stabilization_chain(this%propU, this%propD, this%wrU, this%wrD, sigma_new)
-        ! 先用提出的 sigma_new 重建内部稳定化链，避免旧 ULlist/URlist 失配
-        call rebuild_stabilization_chain(this%propU, this%propD, this%wrU, this%wrD, sigma_new)
+        sigma_curr = sigma_new
         
         ! 按照 CodeXun 的顺序：先 Wrap_L，再 propT_L，再 GlobalK_prop_L
         ! 这样 Wrap_L 会在每个 Nwrap 间隔重建 Green 函数，消除累积误差
@@ -308,6 +307,9 @@ contains
         log_ratio_fermion = 0.d0
         sigma_curr = NsigL_K%sigma
         call this%flip(iseed, size_cluster, log_ratio_space)
+        ! 用提出的 sigma_new 重建内部稳定化链，避免旧 ULlist/URlist 失配
+        call rebuild_stabilization_chain(this%propU, this%propD, this%wrU, this%wrD, sigma_new)
+        sigma_curr = sigma_new
         call Wrap_R(this%propU, this%wrU, 0)
         call Wrap_R(this%propD, this%wrD, 0)
         
