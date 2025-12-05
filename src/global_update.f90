@@ -327,6 +327,9 @@ contains
                 call Wrap_R(this%propD, this%wrD, nt)
                 call Wrap_R_store(this%propU, this%wrU, nt)
                 call Wrap_R_store(this%propD, this%wrD, nt)
+                ! 同步左向因子到当前 σ：确保后续 stab_green 使用的 ULlist 与 sigma_curr 一致
+                call Wrap_L_store(this%propU, this%wrU, nt)
+                call Wrap_L_store(this%propD, this%wrD, nt)
             endif
         enddo
         log_ratio_total = log_ratio_fermion + log_ratio_space
