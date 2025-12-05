@@ -1,6 +1,6 @@
 module GlobalUpdate_mod ! a combination of shift&Wolff update
     use GlobalK_mod
-    use Stabilize_mod
+    use Stabilize_mod, only: Wrap_pre, Wrap_L, Wrap_L_store, Wrap_R, Wrap_R_store, Wrap_tau, Stabilize_init, Stabilize_clear, stab_UR, stab_UL, stab_green_big_out
     use Multiply_mod, only: propK_pre, propT_pre
     use MyLattice, only: ZKRON
     use Fields_mod, only: gauss_boson_ratio_sigma
