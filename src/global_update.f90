@@ -272,6 +272,12 @@ contains
                 call Wrap_L_store(this%propU, this%wrU, nt)
                 call Wrap_L_store(this%propD, this%wrD, nt)
                 call rebuild_stabilization_chain_factors_only(this%propU, this%propD, this%wrU, this%wrD, sigma_curr)
+                call stab_UL(this%propU)
+                call stab_green_big(this%propU)
+                this%propU%Gr = Gr_tmp%Gr00
+                call stab_UL(this%propD)
+                call stab_green_big(this%propD)
+                this%propD%Gr = Gr_tmp%Gr00
             endif
         enddo
         call Wrap_L(this%propU, this%wrU, 0)
@@ -332,6 +338,12 @@ contains
                 call Wrap_L_store(this%propU, this%wrU, nt)
                 call Wrap_L_store(this%propD, this%wrD, nt)
                 call rebuild_stabilization_chain_factors_only(this%propU, this%propD, this%wrU, this%wrD, sigma_curr)
+                call stab_UR(this%propU)
+                call stab_green_big(this%propU)
+                this%propU%Gr = Gr_tmp%Gr00
+                call stab_UR(this%propD)
+                call stab_green_big(this%propD)
+                this%propD%Gr = Gr_tmp%Gr00
             endif
         enddo
         log_ratio_total = log_ratio_fermion + log_ratio_space

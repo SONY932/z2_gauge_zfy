@@ -8,6 +8,7 @@ module Stabilize_mod
     
     private
     public :: Wrap_pre, Wrap_L, Wrap_L_store, Wrap_R, Wrap_R_store, Wrap_tau, Stabilize_init, Stabilize_clear
+    public :: stab_UR, stab_UL, stab_green_big
     
     complex(kind=kind(0.d0)) ::  Z_one
     complex(kind=8), dimension(:,:), allocatable :: matUDV
