@@ -271,10 +271,7 @@ contains
             if (mod(nt, Nwrap) == 0) then
                 call Wrap_L_store(this%propU, this%wrU, nt)
                 call Wrap_L_store(this%propD, this%wrD, nt)
-                ! 重建因子并刷新 G，保证与当前 sigma 一致
                 call rebuild_stabilization_chain_factors_only(this%propU, this%propD, this%wrU, this%wrD, sigma_curr)
-                call stab_UL(this%propU); call stab_green_big(this%propU); this%propU%Gr = Gr_tmp%Gr00
-                call stab_UL(this%propD); call stab_green_big(this%propD); this%propD%Gr = Gr_tmp%Gr00
             endif
         enddo
         call Wrap_L(this%propU, this%wrU, 0)
@@ -334,7 +331,6 @@ contains
                 ! 同步左向因子到当前 σ：确保后续 stab_green 使用的 ULlist 与 sigma_curr 一致
                 call Wrap_L_store(this%propU, this%wrU, nt)
                 call Wrap_L_store(this%propD, this%wrD, nt)
-                ! 仅重建因子，不改当前 G：因子与 sigma_curr 对齐，避免使用过期 UL/VL
                 call rebuild_stabilization_chain_factors_only(this%propU, this%propD, this%wrU, this%wrD, sigma_curr)
             endif
         enddo
