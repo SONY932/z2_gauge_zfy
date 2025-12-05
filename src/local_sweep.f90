@@ -29,6 +29,24 @@ module LocalSweep_mod
     type(Dynamics) :: Dyn
     
 contains
+    subroutine build_Rchain(WrU, WrD)
+        class(WrapList), intent(inout) :: WrU, WrD
+        class(Propagator), allocatable :: Pu_tmp, Pd_tmp
+        integer :: nt
+        allocate(Pu_tmp); allocate(Pd_tmp)
+        call Pu_tmp%make(); call Pd_tmp%make()
+        call Wrap_pre(Pu_tmp, WrU, 0)
+        call Wrap_pre(Pd_tmp, WrD, 0)
+        do nt = 1, Ltrot
+            if (RT > Zero) call propK_pre(Pu_tmp, Pd_tmp, NsigL_K%sigma, nt)
+            call propT_pre(Pu_tmp, Pd_tmp, NsigL_K%lambda, nt)
+            if (mod(nt, Nwrap) == 0) then
+                call Wrap_pre(Pu_tmp, WrU, nt)
+                call Wrap_pre(Pd_tmp, WrD, nt)
+            endif
+        enddo
+        deallocate(Pu_tmp); deallocate(Pd_tmp)
+    end subroutine build_Rchain
     subroutine Local_sweep_init(this)
         class(LocalSweep), intent(inout) :: this
         allocate(Obs_equal)
@@ -146,6 +164,8 @@ contains
             call Dyn%sweep_R(Obs_tau, WrU, WrD)
             Nobst = Nobst + 1
         endif
+        ! 用当前 sigma/lambda 重建右向稳定化链，防止使用上一次 sweep 后失效的 URlist
+        call build_Rchain(WrU, WrD)
         call Wrap_R(PropU, WrU, 0, "S")
         call Wrap_R(PropD, WrD, 0, "S")
         do nt = 1, Ltrot

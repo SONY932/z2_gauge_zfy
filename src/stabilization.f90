@@ -594,16 +594,6 @@ contains
         Prop%UUR(1:Ndim, 1:Ndim) = WrList%URlist(1:Ndim, 1:Ndim, nt_st)
         Prop%VUR(1:Ndim, 1:Ndim) = WrList%VRlist(1:Ndim, 1:Ndim, nt_st)
         Prop%DUR(1:Ndim) = WrList%DRlist(1:Ndim, nt_st)
-        if (nt == 0) then ! reset URlist to identity/D=1 for next sweep_R
-            ! 重新初始化为单位矩阵和 D=1，而不是清空为 0
-            ! 这确保在 sweep_L 结束后，如果有 global update 访问 URlist，
-            ! 它们是有效的值
-            do ii = 0, Nst
-                WrList%URlist(:,:,ii) = ZKRON
-                WrList%VRlist(:,:,ii) = ZKRON
-                WrList%DRlist(:,ii) = dcmplx(1.d0, 0.d0)
-            enddo
-        endif
         if (nt .ne. Ltrot) then
             call stab_UL(Prop)
             ! 计算 G_0 = (1 + B_tot)^{-1}
