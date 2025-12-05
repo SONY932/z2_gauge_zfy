@@ -598,21 +598,20 @@ contains
         Prop%UUR(1:Ndim, 1:Ndim) = WrList%URlist(1:Ndim, 1:Ndim, nt_st)
         Prop%VUR(1:Ndim, 1:Ndim) = WrList%VRlist(1:Ndim, 1:Ndim, nt_st)
         Prop%DUR(1:Ndim) = WrList%DRlist(1:Ndim, nt_st)
-        ! 从当前 wrap 段同步左右因子，保证与最新 σ/λ 链一致
-        Prop%UUL(1:Ndim, 1:Ndim) = WrList%ULlist(1:Ndim, 1:Ndim, nt_st)
-        Prop%VUL(1:Ndim, 1:Ndim) = WrList%VLlist(1:Ndim, 1:Ndim, nt_st)
-        Prop%DUL(1:Ndim) = WrList%DLlist(1:Ndim, nt_st)
-        Prop%UUR(1:Ndim, 1:Ndim) = WrList%URlist(1:Ndim, 1:Ndim, nt_st)
-        Prop%VUR(1:Ndim, 1:Ndim) = WrList%VRlist(1:Ndim, 1:Ndim, nt_st)
-        Prop%DUR(1:Ndim) = WrList%DRlist(1:Ndim, nt_st)
         if (nt .ne. Ltrot) then
             call stab_UL(Prop)
             ! 使用更稳健的 big 版本一次性重建，避免依赖重试
             call stab_green_big(Prop)
             Gr = Gr_tmp%Gr00
             if (has_nan_or_inf(Gr)) Gr = ZKRON
+            dif = compare_mat(Gr, Prop%Gr)
+            if (.not. ieee_is_finite(dif)) dif = 0.d0
             Prop%Gr = Gr
-            dif = 0.d0
+            if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
+            if (dif .ge. 1.d-10 .and. .not. warn_left_done) then
+                write(6,*) nt, dif, "left ortho diff in RANK ", IRANK, " max|Gr|=", max_abs(Gr)
+                warn_left_done = .true.
+            endif
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
         endif
         WrList%ULlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUL(1:Ndim, 1:Ndim)
@@ -653,6 +652,10 @@ contains
         endif
         nt_st = int(nt/Nwrap)
         Gr = dcmplx(0.d0, 0.d0)
+        ! 同步当前 wrap 段的左侧因子，确保 stab_UR 使用最新 UUL/VUL/DUL
+        Prop%UUL(1:Ndim, 1:Ndim) = WrList%ULlist(1:Ndim, 1:Ndim, nt_st)
+        Prop%VUL(1:Ndim, 1:Ndim) = WrList%VLlist(1:Ndim, 1:Ndim, nt_st)
+        Prop%DUL(1:Ndim) = WrList%DLlist(1:Ndim, nt_st)
         if (nt == Ltrot) then
             ! 清空 ULlist，但重新初始化为单位矩阵和 D=1
             ! 这确保在下一次 sweep_L 之前，如果有 global update 访问 ULlist，
@@ -670,8 +673,14 @@ contains
             Gr = Gr_tmp%Gr00
             if (has_nan_or_inf(Gr)) Gr = ZKRON
 
+            dif = compare_mat(Gr, Prop%Gr)
+            if (.not. ieee_is_finite(dif)) dif = 0.d0
             Prop%Gr = Gr
-            dif = 0.d0
+            if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
+            if (dif .ge. 1.d-10 .and. .not. warn_right_done) then
+                write(6,*) nt, dif, "right ortho diff in RANK ", IRANK, " max|Gr|=", max_abs(Gr)
+                warn_right_done = .true.
+            endif
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
         endif
         WrList%URlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUR(1:Ndim, 1:Ndim)
