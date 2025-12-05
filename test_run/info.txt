@@ -18,25 +18,25 @@
  # No. of MPI processes       :           1
  ==============================================
  Skipping Bosonic warm-up
- Progress           20 : Accept_Klocal_shift:    1.0507812500000002E-002
- Progress           20 : Accept_lambda_local:   0.13125000000000001     
- Progress           20 : Accept_Kglobal:   0.14999999999999999     
- Progress           40 : Accept_Klocal_shift:    1.0595703125000000E-002
- Progress           40 : Accept_lambda_local:   0.12812499999999999     
- Progress           40 : Accept_Kglobal:   0.11250000000000000     
- Progress           60 : Accept_Klocal_shift:    9.8111979166666703E-003
- Progress           60 : Accept_lambda_local:   0.11770833333333333     
- Progress           60 : Accept_Kglobal:    8.3333333333333329E-002
- Progress           80 : Accept_Klocal_shift:    9.0087890625000049E-003
- Progress           80 : Accept_lambda_local:   0.10937500000000000     
- Progress           80 : Accept_Kglobal:    6.2500000000000000E-002
- Progress          100 : Accept_Klocal_shift:    9.1289062500000025E-003
- Progress          100 : Accept_lambda_local:    9.6250000000000002E-002
- Progress          100 : Accept_Kglobal:    5.5000000000000000E-002
- Average size of Wolff cluster                  :   34.240000000000002     
- Accept_Kglobal                                 :   5.5000000000000000E-002
- Accept_Klocal_shift                            :   9.1289062500000025E-003
- Accept_lambda_local                            :   9.6250000000000002E-002
- Max diff Matrix                                :   6.7010212548775598     
- Mean diff Matrix                               :  0.78182522153947165     
- Tot CPU time                                   :   28.917562997000001     
+ Progress           20 : Accept_Klocal_shift:    1.6894531250000001E-002
+ Progress           20 : Accept_lambda_local:   0.14374999999999999     
+ Progress           20 : Accept_Kglobal:   0.12500000000000000     
+ Progress           40 : Accept_Klocal_shift:    1.5322265625000003E-002
+ Progress           40 : Accept_lambda_local:    7.1874999999999994E-002
+ Progress           40 : Accept_Kglobal:    9.3750000000000000E-002
+ Progress           60 : Accept_Klocal_shift:    1.3678385416666664E-002
+ Progress           60 : Accept_lambda_local:    4.7916666666666670E-002
+ Progress           60 : Accept_Kglobal:    6.6666666666666666E-002
+ Progress           80 : Accept_Klocal_shift:    1.3706054687499997E-002
+ Progress           80 : Accept_lambda_local:    3.5937499999999997E-002
+ Progress           80 : Accept_Kglobal:    8.7499999999999994E-002
+ Progress          100 : Accept_Klocal_shift:    1.4515624999999992E-002
+ Progress          100 : Accept_lambda_local:    2.9999999999999999E-002
+ Progress          100 : Accept_Kglobal:    7.2499999999999995E-002
+ Average size of Wolff cluster                  :   34.465000000000003     
+ Accept_Kglobal                                 :   7.2499999999999995E-002
+ Accept_Klocal_shift                            :   1.4515624999999992E-002
+ Accept_lambda_local                            :   2.9999999999999999E-002
+ Max diff Matrix                                :   19.097918007522821     
+ Mean diff Matrix                               :   1.5043912617579211     
+ Tot CPU time                                   :   32.142851718000003     

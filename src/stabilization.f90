@@ -665,6 +665,10 @@ contains
         Prop%UUL(1:Ndim, 1:Ndim) = WrList%ULlist(1:Ndim, 1:Ndim, nt_st)
         Prop%VUL(1:Ndim, 1:Ndim) = WrList%VLlist(1:Ndim, 1:Ndim, nt_st)
         Prop%DUL(1:Ndim) = WrList%DLlist(1:Ndim, nt_st)
+        ! 同步右向因子，确保与当前 sigma 配置一致
+        Prop%UUR(1:Ndim, 1:Ndim) = WrList%URlist(1:Ndim, 1:Ndim, nt_st)
+        Prop%VUR(1:Ndim, 1:Ndim) = WrList%VRlist(1:Ndim, 1:Ndim, nt_st)
+        Prop%DUR(1:Ndim) = WrList%DRlist(1:Ndim, nt_st)
         if (nt == Ltrot) then
             ! 清空 ULlist，但重新初始化为单位矩阵和 D=1
             ! 这确保在下一次 sweep_L 之前，如果有 global update 访问 ULlist，
