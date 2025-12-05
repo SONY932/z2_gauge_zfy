@@ -687,6 +687,9 @@ contains
         call Op_K%mmult_R(PropD%Gr, Latt, sigma_current, nt, 1)
         call Op_K%mmult_L(PropU%Gr, Latt, sigma_current, nt, -1)
         call Op_K%mmult_L(PropD%Gr, Latt, sigma_current, nt, -1)
+        ! 同步左因子传播，保持与当前 sigma 一致
+        call Op_K%mmult_L(PropU%UUL, Latt, sigma_current, nt, 1)
+        call Op_K%mmult_L(PropD%UUL, Latt, sigma_current, nt, 1)
         
         ! 按组顺序处理（从 group_1 到 group_4）
         do grp = 1, 4
