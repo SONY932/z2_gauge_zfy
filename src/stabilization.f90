@@ -591,36 +591,19 @@ contains
         endif
         nt_st = int(nt/Nwrap)
         Gr = dcmplx(0.d0, 0.d0)
-        Prop%UUR(1:Ndim, 1:Ndim) = WrList%URlist(1:Ndim, 1:Ndim, nt_st)
-        Prop%VUR(1:Ndim, 1:Ndim) = WrList%VRlist(1:Ndim, 1:Ndim, nt_st)
-        Prop%DUR(1:Ndim) = WrList%DRlist(1:Ndim, nt_st)
         if (nt .ne. Ltrot) then
             call stab_UL(Prop)
-            ! 计算 G_0 = (1 + B_tot)^{-1}
-            ! 不转换为 G_λ，因为传播操作需要 G_0
-            call stab_green(Gr, Prop, nt)
-            ! 若出现 NaN/Inf，使用更稳健的 big 版本重建，并降级为单位阵保证继续运行
-            if (has_nan_or_inf(Prop%Gr)) Prop%Gr = ZKRON
-            if (has_nan_or_inf(Gr)) then
-                call stab_green_big(Prop)
-                Gr = Gr_tmp%Gr00
-                if (has_nan_or_inf(Gr)) Gr = ZKRON
-            endif
+            ! 使用更稳健的 big 版本一次性重建，避免依赖重试
+            call stab_green_big(Prop)
+            Gr = Gr_tmp%Gr00
+            if (has_nan_or_inf(Gr)) Gr = ZKRON
             dif = compare_mat(Gr, Prop%Gr)
             if (.not. ieee_is_finite(dif)) dif = 0.d0
-            if (dif > 1.d-3) then
-                call stab_green_big(Prop)
-                Gr = Gr_tmp%Gr00
-                dif = compare_mat(Gr, Prop%Gr)
-                if (.not. ieee_is_finite(dif)) dif = 0.d0
-                if (.not. warn_left_done) then
-                    write(6,*) nt, dif, "left ortho retry with big in RANK", IRANK, " max|Gr|=", max_abs(Gr)
-                    warn_left_done = .true.
-                endif
-                Prop%Gr = Gr
-            endif
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
-            if (dif .ge. 5.5d-5 .and. .not. warn_left_done) write(6,*) nt, dif, "left ortho unstable in RANK ", IRANK
+            if (dif .ge. 5.5d-5 .and. .not. warn_left_done) then
+                write(6,*) nt, dif, "left ortho diff in RANK ", IRANK, " max|Gr|=", max_abs(Gr)
+                warn_left_done = .true.
+            endif
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
             Prop%Gr = Gr
         endif
@@ -662,13 +645,6 @@ contains
         endif
         nt_st = int(nt/Nwrap)
         Gr = dcmplx(0.d0, 0.d0)
-        Prop%UUL(1:Ndim, 1:Ndim) = WrList%ULlist(1:Ndim, 1:Ndim, nt_st)
-        Prop%VUL(1:Ndim, 1:Ndim) = WrList%VLlist(1:Ndim, 1:Ndim, nt_st)
-        Prop%DUL(1:Ndim) = WrList%DLlist(1:Ndim, nt_st)
-        ! 同步右向因子，确保与当前 sigma 配置一致
-        Prop%UUR(1:Ndim, 1:Ndim) = WrList%URlist(1:Ndim, 1:Ndim, nt_st)
-        Prop%VUR(1:Ndim, 1:Ndim) = WrList%VRlist(1:Ndim, 1:Ndim, nt_st)
-        Prop%DUR(1:Ndim) = WrList%DRlist(1:Ndim, nt_st)
         if (nt == Ltrot) then
             ! 清空 ULlist，但重新初始化为单位矩阵和 D=1
             ! 这确保在下一次 sweep_L 之前，如果有 global update 访问 ULlist，
@@ -681,36 +657,18 @@ contains
         endif
         if (nt .ne. 0) then
             call stab_UR(Prop)
-            ! 计算 G_0 = (1 + B_tot)^{-1}
-            ! 不转换为 G_λ，因为传播操作需要 G_0
-            call stab_green(Gr, Prop, nt)
-
-            if (has_nan_or_inf(Prop%Gr)) Prop%Gr = ZKRON
-            if (has_nan_or_inf(Gr) .or. max_abs(Gr) > 1.d6) then
-                call stab_green_big(Prop)
-                Gr = Gr_tmp%Gr00
-                if (has_nan_or_inf(Gr)) Gr = ZKRON
-            endif
+            ! 使用更稳健的 big 版本一次性重建，避免依赖重试
+            call stab_green_big(Prop)
+            Gr = Gr_tmp%Gr00
+            if (has_nan_or_inf(Gr)) Gr = ZKRON
 
             dif = compare_mat(Gr, Prop%Gr)
             if (.not. ieee_is_finite(dif)) dif = 0.d0
-            if (dif > 1.d-3) then
-                ! 大偏差时，使用更稳健的 big 版本重建并覆盖，并刷新当前 wrap 段
-                call stab_green_big(Prop)
-                Gr = Gr_tmp%Gr00
-                dif = compare_mat(Gr, Prop%Gr)
-                if (.not. ieee_is_finite(dif)) dif = 0.d0
-                Prop%Gr = Gr
-                WrList%URlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUR
-                WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR
-                WrList%DRlist(1:Ndim, nt_st) = Prop%DUR
-                if (.not. warn_right_done) then
-                    write(6,*) nt, dif, "right ortho retry with big in RANK", IRANK, " max|Gr|=", max_abs(Gr)
-                    warn_right_done = .true.
-                endif
-            endif
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
-            if (dif .ge. 5.5d-5 .and. .not. warn_right_done) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK
+            if (dif .ge. 5.5d-5 .and. .not. warn_right_done) then
+                write(6,*) nt, dif, "right ortho diff in RANK ", IRANK, " max|Gr|=", max_abs(Gr)
+                warn_right_done = .true.
+            endif
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
             Prop%Gr = Gr
         endif
