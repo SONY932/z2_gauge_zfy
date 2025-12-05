@@ -17,6 +17,8 @@ module Stabilize_mod
     complex(kind=8), dimension(:), allocatable :: bigD
     complex(kind=8), dimension(:,:), allocatable :: mat_big, mat_left, mat_right, Gr_tot, bigU, bigV, invbigU, invbigV
     type(PropGreen), allocatable :: Gr_tmp
+    logical :: warn_left_done = .false.
+    logical :: warn_right_done = .false.
     
 contains
     subroutine Stabilize_init()
@@ -621,11 +623,14 @@ contains
                 Gr = Gr_tmp%Gr00
                 dif = compare_mat(Gr, Prop%Gr)
                 if (.not. ieee_is_finite(dif)) dif = 0.d0
-                write(6,*) nt, dif, "left ortho retry with big in RANK", IRANK
+                if (.not. warn_left_done) then
+                    write(6,*) nt, dif, "left ortho retry with big in RANK", IRANK, " max|Gr|=", max_abs(Gr)
+                    warn_left_done = .true.
+                endif
                 Prop%Gr = Gr
             endif
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
-            if (dif .ge. 5.5d-5) write(6,*) nt, dif, "left ortho unstable in RANK ", IRANK
+            if (dif .ge. 5.5d-5 .and. .not. warn_left_done) write(6,*) nt, dif, "left ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
             Prop%Gr = Gr
         endif
@@ -696,16 +701,22 @@ contains
             dif = compare_mat(Gr, Prop%Gr)
             if (.not. ieee_is_finite(dif)) dif = 0.d0
             if (dif > 1.d-3) then
-                ! 大偏差时，使用更稳健的 big 版本重建并覆盖
+                ! 大偏差时，使用更稳健的 big 版本重建并覆盖，并刷新当前 wrap 段
                 call stab_green_big(Prop)
                 Gr = Gr_tmp%Gr00
                 dif = compare_mat(Gr, Prop%Gr)
                 if (.not. ieee_is_finite(dif)) dif = 0.d0
-                write(6,*) nt, dif, "right ortho retry with big in RANK", IRANK
                 Prop%Gr = Gr
+                WrList%URlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUR
+                WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR
+                WrList%DRlist(1:Ndim, nt_st) = Prop%DUR
+                if (.not. warn_right_done) then
+                    write(6,*) nt, dif, "right ortho retry with big in RANK", IRANK, " max|Gr|=", max_abs(Gr)
+                    warn_right_done = .true.
+                endif
             endif
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
-            if (dif .ge. 5.5d-5) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK
+            if (dif .ge. 5.5d-5 .and. .not. warn_right_done) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
             Prop%Gr = Gr
         endif
