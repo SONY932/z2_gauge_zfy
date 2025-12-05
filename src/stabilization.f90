@@ -600,10 +600,13 @@ contains
         Prop%DUR(1:Ndim) = WrList%DRlist(1:Ndim, nt_st)
         if (nt .ne. Ltrot) then
             call stab_UL(Prop)
-            ! 使用更稳健的 big 版本一次性重建，避免依赖重试
-            call stab_green_big(Prop)
-            Gr = Gr_tmp%Gr00
-            if (has_nan_or_inf(Gr)) Gr = ZKRON
+            ! 优先使用标准 stab_green；若异常再退回 big
+            call stab_green(Gr, Prop, nt)
+            if (has_nan_or_inf(Gr) .or. max_abs(Gr) > 1.d6) then
+                call stab_green_big(Prop)
+                Gr = Gr_tmp%Gr00
+                if (has_nan_or_inf(Gr)) Gr = ZKRON
+            endif
             dif = compare_mat(Gr, Prop%Gr)
             if (.not. ieee_is_finite(dif)) dif = 0.d0
             Prop%Gr = Gr
@@ -664,10 +667,13 @@ contains
         endif
         if (nt .ne. 0) then
             call stab_UR(Prop)
-            ! 使用更稳健的 big 版本一次性重建，避免依赖重试
-            call stab_green_big(Prop)
-            Gr = Gr_tmp%Gr00
-            if (has_nan_or_inf(Gr)) Gr = ZKRON
+            ! 优先使用标准 stab_green；若异常再退回 big
+            call stab_green(Gr, Prop, nt)
+            if (has_nan_or_inf(Gr) .or. max_abs(Gr) > 1.d6) then
+                call stab_green_big(Prop)
+                Gr = Gr_tmp%Gr00
+                if (has_nan_or_inf(Gr)) Gr = ZKRON
+            endif
 
             dif = compare_mat(Gr, Prop%Gr)
             if (.not. ieee_is_finite(dif)) dif = 0.d0
