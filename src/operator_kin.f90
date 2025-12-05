@@ -5,7 +5,7 @@ module OperatorKin_mod
     public
 
     type :: OperatorKin
-        real(kind = 8), private :: alpha, alpha_2
+        real(kind = 8), public :: alpha, alpha_2  ! 改为 public 以便在 localK 中使用
         real(kind = 8), private :: entryC
         real(kind = 8), private :: entryS
 
@@ -16,14 +16,16 @@ module OperatorKin_mod
         procedure :: get_delta => opK_get_delta
         procedure :: mmult_R => opK_mmult_R
         procedure :: mmult_L => opK_mmult_L
+        procedure :: mmult_R_group => opK_mmult_R_group
+        procedure :: mmult_L_group => opK_mmult_L_group
     end type OperatorKin
 
 contains
     subroutine opK_set(this)
         class(OperatorKin), intent(inout) :: this
-        ! Symmetric checkerboard decomposition uses alpha = 0.5*Dtau*RT per sweep
-        ! Two sweeps (forward + backward) give effective exp(Dtau*RT*sigma)
-        this%alpha = 0.5d0 * Dtau * RT
+        ! 标准棋盘分解：每个 group 操作一次，使用完整步长
+        ! 这与 get_delta 中的计算一致
+        this%alpha = Dtau * RT
         this%alpha_2 = Dtau * RT
         return
     end subroutine opK_set
@@ -59,31 +61,53 @@ contains
     end subroutine opK_get_delta
 
     subroutine opK_mmult_R(this, Mat, Latt, sigma, ntau, nflag)
-! In Mat Out U(NF) * EXP(D(NF)) * Mat
-! Symmetrized checkerboard decomposition: forward (1->2->3->4) then backward (4->3->2->1)
+! In Mat Out B * Mat（nflag=1）或 B^{-1} * Mat（nflag=-1）
+! B = B_4 * B_3 * B_2 * B_1（棋盘分解）
+! 
+! 对于 nflag=1 (B * Mat)：
+!   B * Mat = B_4 * B_3 * B_2 * B_1 * Mat
+!   计算顺序：group_1 -> group_2 -> group_3 -> group_4
+!
+! 对于 nflag=-1 (B^{-1} * Mat)：
+!   B^{-1} = B_1^{-1} * B_2^{-1} * B_3^{-1} * B_4^{-1}
+!   计算顺序：group_4 -> group_3 -> group_2 -> group_1（反序）
+!
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
         class(SquareLattice), intent(in) :: Latt
         real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: ntau, nflag
-! Local:
-        integer :: ig
 
-        ! Forward sweep: group 1 -> 2 -> 3 -> 4
-        call process_group(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-
-        ! Backward sweep: group 4 -> 3 -> 2 -> 1 (for symmetrization)
-        call process_group(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
+        if (nflag > 0) then
+            ! B * Mat：group_1 -> group_2 -> group_3 -> group_4
+            call process_group(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
+            call process_group(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
+            call process_group(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
+            call process_group(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
+        else
+            ! B^{-1} * Mat：group_4 -> group_3 -> group_2 -> group_1（反序）
+            call process_group(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
+            call process_group(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
+            call process_group(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
+            call process_group(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
+        endif
 
         return
     end subroutine opK_mmult_R
+    
+    ! 按组进行右乘（用于 LocalK_prop_R 中的分组更新）
+    subroutine opK_mmult_R_group(this, Mat, group, Latt, sigma, ntau, nflag)
+        class(OperatorKin), intent(inout) :: this
+        complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
+        integer, dimension(:), intent(in) :: group
+        class(SquareLattice), intent(in) :: Latt
+        real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
+        integer, intent(in) :: ntau, nflag
+
+        call process_group(this, Mat, group, Latt, sigma, ntau, nflag)
+        return
+    end subroutine opK_mmult_R_group
 
     subroutine process_group(this, Mat, group, Latt, sigma, ntau, nflag)
 ! Helper subroutine to process one checkerboard group
@@ -120,8 +144,17 @@ contains
     end subroutine process_group
 
     subroutine opK_mmult_L(this, Mat, Latt, sigma, ntau, nflag)
-! In Mat Out Mat * EXP(D(NF)) * UT(NF)
-! Symmetrized checkerboard decomposition: forward (1->2->3->4) then backward (4->3->2->1)
+! In Mat Out Mat * B（nflag=1）或 Mat * B^{-1}（nflag=-1）
+! B = B_4 * B_3 * B_2 * B_1（棋盘分解）
+! 
+! 对于 nflag=1 (Mat * B)：
+!   Mat * B = Mat * B_4 * B_3 * B_2 * B_1
+!   计算顺序：group_4 -> group_3 -> group_2 -> group_1（从右往左乘）
+!
+! 对于 nflag=-1 (Mat * B^{-1})：
+!   Mat * B^{-1} = Mat * B_1^{-1} * B_2^{-1} * B_3^{-1} * B_4^{-1}
+!   计算顺序：group_1 -> group_2 -> group_3 -> group_4（从右往左乘逆）
+!
 ! Arguments: 
         class(OperatorKin), intent(inout) :: this
         complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
@@ -129,20 +162,35 @@ contains
         real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: ntau, nflag
 
-        ! Forward sweep: group 1 -> 2 -> 3 -> 4
-        call process_group_L(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-
-        ! Backward sweep: group 4 -> 3 -> 2 -> 1 (for symmetrization)
-        call process_group_L(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
-        call process_group_L(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
+        if (nflag > 0) then
+            ! Mat * B：group_4 -> group_3 -> group_2 -> group_1
+            call process_group_L(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
+            call process_group_L(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
+            call process_group_L(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
+            call process_group_L(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
+        else
+            ! Mat * B^{-1}：group_1 -> group_2 -> group_3 -> group_4（反序）
+            call process_group_L(this, Mat, Latt%group_1, Latt, sigma, ntau, nflag)
+            call process_group_L(this, Mat, Latt%group_2, Latt, sigma, ntau, nflag)
+            call process_group_L(this, Mat, Latt%group_3, Latt, sigma, ntau, nflag)
+            call process_group_L(this, Mat, Latt%group_4, Latt, sigma, ntau, nflag)
+        endif
 
         return
     end subroutine opK_mmult_L
+    
+    ! 按组进行左乘（用于 LocalK_prop_L 中的分组更新）
+    subroutine opK_mmult_L_group(this, Mat, group, Latt, sigma, ntau, nflag)
+        class(OperatorKin), intent(inout) :: this
+        complex(kind = 8), dimension(Ndim, Ndim), intent(inout) :: Mat
+        integer, dimension(:), intent(in) :: group
+        class(SquareLattice), intent(in) :: Latt
+        real(kind = 8), dimension(2*Lq, Ltrot), intent(in) :: sigma
+        integer, intent(in) :: ntau, nflag
+
+        call process_group_L(this, Mat, group, Latt, sigma, ntau, nflag)
+        return
+    end subroutine opK_mmult_L_group
 
     subroutine process_group_L(this, Mat, group, Latt, sigma, ntau, nflag)
 ! Helper subroutine to process one checkerboard group (left multiplication)

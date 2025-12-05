@@ -1,11 +1,12 @@
 module Stabilize_mod
     use ProcessMatrix
     use MyMats
+    use MyLattice, only: ZKRON
     use DQMC_Model_mod      ! 引入 NsigL_K%lambda，用于在构造 Green 时插入 P_lambda
     implicit none
     
     private
-    public :: Wrap_pre, Wrap_L, Wrap_R, Wrap_tau, Stabilize_init, Stabilize_clear
+    public :: Wrap_pre, Wrap_L, Wrap_L_store, Wrap_R, Wrap_R_store, Wrap_tau, Stabilize_init, Stabilize_clear
     
     complex(kind=kind(0.d0)) ::  Z_one
     complex(kind=8), dimension(:,:), allocatable :: matUDV
@@ -52,6 +53,7 @@ contains
         complex(kind=kind(0.d0)) :: Z
         integer :: info, i, j
         real(kind=kind(0.d0)) :: X
+        real(kind=kind(0.d0)), parameter :: tiny_val = 1.d-100
 ! Query optimal amount of memory
         call ZGEQP3(Ndim, Ndim, Mat, Ndim, IPVT, TAU(1), Z, -1, RWORK(1), info)
         Lwork = int(dble(Z)); allocate(WORK(Lwork))
@@ -59,7 +61,12 @@ contains
         call ZGEQP3(Ndim, Ndim, Mat, Ndim, IPVT, TAU(1), WORK(1), Lwork, RWORK(1), info)
 ! separate off D
         do i = 1, Ndim
-            X = abs(Mat(i, i)); D(i) = X ! plain diagonal entry
+            X = abs(Mat(i, i))
+            ! 保护：避免除以 0
+            if (X < tiny_val) then
+                X = tiny_val
+            endif
+            D(i) = X ! plain diagonal entry
             do j = i, Ndim
                 Mat(i, j) = Mat(i, j) / X
             enddo
@@ -71,6 +78,7 @@ contains
         class(Propagator), intent(inout) :: Prop
         integer :: info, i, j, Lwork
         complex(kind=8), dimension(:), allocatable :: WORK
+        real(kind=8) :: max_dur, scale_factor
 ! QR(TMP * U * D) * V
 ! U*D
         matUDV = Prop%UUR
@@ -81,6 +89,21 @@ contains
         IPVT = 0
 ! output in matUDV and DUR
         call QDRP_decompose(matUDV, Prop%DUR, IPVT, TAU, WORK, Lwork)
+
+! ===== 只在最大值接近溢出时才 rescale =====
+! 阈值设为 1e150，给 DUR*DUL 留 1e156 的余量
+        max_dur = 0.d0
+        do i = 1, Ndim
+            if (abs(Prop%DUR(i)) > max_dur) max_dur = abs(Prop%DUR(i))
+        enddo
+        
+        if (max_dur > 1.d150) then
+            scale_factor = max_dur / 1.d100  ! 缩放到约 1e100
+            Prop%LOGDUR = Prop%LOGDUR + log(scale_factor)
+            Prop%DUR = Prop%DUR / scale_factor
+        endif
+! ================================================================
+
 ! Permute V. Since we multiply with V from the right we have to permute the rows of V.
 ! A V = A P P^-1 V = Q R P^-1 V; ZLAPMR: rearrange rows of matrix V
         call ZLAPMR(.true., Ndim, Ndim, Prop%VUR, Ndim, IPVT) ! lapack 3.3
@@ -97,6 +120,7 @@ contains
         class(Propagator), intent(inout) :: Prop
         integer :: info, i, j, Lwork
         complex(kind=8), dimension(:), allocatable :: WORK
+        real(kind=8) :: max_dul, scale_factor
 ! QR(TMP^\dagger * U^dagger * D) * V^dagger
 ! U*D
         matUDV = dconjg(transpose(Prop%UUL))
@@ -107,6 +131,20 @@ contains
         IPVT = 0 
 ! output in matUDV and DUL
         call QDRP_decompose(matUDV, Prop%DUL, IPVT, TAU, WORK, Lwork)
+
+! ===== 只在最大值接近溢出时才 rescale =====
+        max_dul = 0.d0
+        do i = 1, Ndim
+            if (abs(Prop%DUL(i)) > max_dul) max_dul = abs(Prop%DUL(i))
+        enddo
+        
+        if (max_dul > 1.d150) then
+            scale_factor = max_dul / 1.d100
+            Prop%LOGDUL = Prop%LOGDUL + log(scale_factor)
+            Prop%DUL = Prop%DUL / scale_factor
+        endif
+! ================================================================
+
 ! Permute V. Since we multiply with V^dagger from the right we have to permute the columns of V.
 ! A V^dagger = A P P^-1 V^dagger = Q R P^-1 V^dagger; ZLAPMT: rearrange columns of matrix V
         call ZLAPMT(.true., Ndim, Ndim, Prop%VUL, Ndim, IPVT)
@@ -120,6 +158,9 @@ contains
     end subroutine stab_UL
     
     subroutine stab_green(Gr, Prop, nt)
+! Calculates the Green's function from the UDV decomposition of UUL and UUR
+! B = UL DL VL VR DR UR = UL DL (VL VR) DR UR
+! G = (1+B)^-1
 ! Arguments: 
         complex(kind=8), dimension(Ndim, Ndim), intent(out) :: Gr
         class(Propagator), intent(in) :: Prop
@@ -129,12 +170,20 @@ contains
         complex(kind=8), dimension(:), allocatable :: WORK
         complex(kind=kind(0.d0)) :: Z
         integer :: nl, nr, Lwork, info
+        real(kind=8) :: log_scale, scale_factor
+        
 ! coefficient of zgemm: alpha * op(A) * op(B) + beta * op(C); here alpha=Z_one=1, beta=0
 ! VRVL = VR*VL
         call mmult(VRVL, Prop%VUR, Prop%VUL)
 ! invULUR = UR^dagger UL^dagger = (UL*UR)^-1; character C: conjugate transpose of UUR and UUL
         call ZGEMM('C', 'C', Ndim, Ndim, Ndim, Z_one, Prop%UUR, Ndim, Prop%UUL, Ndim, dcmplx(0.d0, 0.d0), invULUR, Ndim)
+        
+        
 ! compute: matUDV = (UL*UR)^-1 + DR VR VL DL
+! 由于 DR 和 DL 可能被 rescale 了，需要考虑 scale 因子
+! 总 scale = exp(LOGDUR + LOGDUL)
+        log_scale = Prop%LOGDUR + Prop%LOGDUL
+
         temp = dcmplx(0.d0, 0.d0)
         do nr = 1, Ndim ! temp(1:Ndim, nr) = VRVL(1:Ndim, nr) * DUL(nr)
             call zaxpy(Ndim, Prop%DUL(nr), VRVL(1, nr), 1, temp(1, nr), 1)
@@ -143,12 +192,35 @@ contains
         do nl = 1, Ndim ! VRVL(nl, 1:Ndim) = DUR(nl) * temp(nl, 1:Ndim)
             call zaxpy(Ndim, Prop%DUR(nl), temp(nl, 1), Ndim, VRVL(nl, 1), Ndim)
         enddo
-        matUDV = invULUR + VRVL
+        
+! 现在 VRVL 是 DR_scaled * VR * VL * DL_scaled
+! 实际的 VRVL_original = VRVL * exp(log_scale)
+! 只有当 log_scale > 0 时才需要恢复 scale
+        if (log_scale > 0.d0 .and. log_scale < 300.d0) then
+            scale_factor = exp(log_scale)
+            matUDV = invULUR + VRVL * scale_factor
+        else if (log_scale >= 300.d0) then
+            ! scale 太大，近似处理：G ≈ 0
+            ! 直接用 VRVL 作为主项，invULUR 可忽略
+            matUDV = VRVL
+        else
+            ! 没有 rescale，直接使用
+            matUDV = invULUR + VRVL
+        endif
 ! if ntau >Ltrot/2, decompose matUDV^dagger
         if (nt > Ltrot/2) matUDV = dconjg(transpose(matUDV))
 ! matUDV * P  = U D V
         IPVT = 0
         call QDRP_decompose(matUDV, DUP, IPVT, TAU, WORK, Lwork)
+        
+        ! 检查 DUP 是否有接近 0 的元素
+        do nl = 1, Ndim
+            if (abs(DUP(nl)) < 1.d-100) then
+                ! 设置为一个小的非零值以避免除以 0
+                DUP(nl) = dcmplx(1.d-100, 0.d0)
+            endif
+        enddo
+        
         if (nt < Ltrot/2 + 1) then ! ntau < Ltrot/2
 ! UR U D V P^dagger UL G = 1 => 
 ! G=UL^dagger * P * V^-1 * D^-1 * U^dagger * UR^dagger; multiply from right to left
@@ -187,17 +259,81 @@ contains
             write(6,*) "illegal imaginary input in stabgreen, nt =", nt
         endif
 
-        ! 注意：apply_lambda_projection 暂时禁用
-        ! 因为它会改变 Green 函数的形式，但传播过程中没有相应考虑
-        ! 这会导致稳定化检查时的不一致
-        ! TODO: 需要重新设计 λ 投影的实现方式
-        ! if (nt == 0 .or. nt == Ltrot) then
-        !     call apply_lambda_projection(Gr)
-        ! endif
-
         deallocate(WORK)
         return
     end subroutine stab_green
+    
+    subroutine stab_green_lambda(Gr, Prop, nt)
+! Calculates G_lambda = (1 + P[lambda] * B)^{-1}
+! 其中 P[lambda] = diag(lambda_i)，lambda_i = ±1
+! 实现方法：用 P[lambda] * UL 代替 UL，即把 UL 的每一行乘以对应的 lambda
+! 由于 P[lambda] 是对角矩阵（条件数 = 1），这不会影响数值稳定性
+! Arguments: 
+        complex(kind=8), dimension(Ndim, Ndim), intent(out) :: Gr
+        class(Propagator), intent(in) :: Prop
+        integer, intent(in) :: nt
+! Local: 
+        complex(kind=8), dimension(Ndim, Ndim) :: VRVL, invULUR, UUL_lambda
+        complex(kind=8), dimension(:), allocatable :: WORK
+        complex(kind=kind(0.d0)) :: Z
+        integer :: nl, nr, Lwork, info, ii
+
+! 创建 UUL 的副本并应用 P[lambda]
+! UL_lambda = P[lambda] * UL，即把每一行乘以对应的 lambda
+        UUL_lambda = Prop%UUL
+        do ii = 1, Ndim
+            UUL_lambda(ii, :) = UUL_lambda(ii, :) * NsigL_K%lambda(ii)
+        enddo
+
+! VRVL = VR*VL
+        call mmult(VRVL, Prop%VUR, Prop%VUL)
+! invULUR = UR^dagger (P*UL)^dagger = (P*UL*UR)^-1
+! 由于 P 是实对角矩阵，(P*UL)^dagger = UL^dagger * P
+        call ZGEMM('C', 'C', Ndim, Ndim, Ndim, Z_one, Prop%UUR, Ndim, UUL_lambda, Ndim, dcmplx(0.d0, 0.d0), invULUR, Ndim)
+! compute: matUDV = (P*UL*UR)^-1 + DR VR VL DL
+        temp = dcmplx(0.d0, 0.d0)
+        do nr = 1, Ndim
+            call zaxpy(Ndim, Prop%DUL(nr), VRVL(1, nr), 1, temp(1, nr), 1)
+        enddo
+        VRVL = dcmplx(0.d0, 0.d0)
+        do nl = 1, Ndim
+            call zaxpy(Ndim, Prop%DUR(nl), temp(nl, 1), Ndim, VRVL(nl, 1), Ndim)
+        enddo
+        matUDV = invULUR + VRVL
+! if ntau >Ltrot/2, decompose matUDV^dagger
+        if (nt > Ltrot/2) matUDV = dconjg(transpose(matUDV))
+! matUDV * P  = U D V
+        IPVT = 0
+        call QDRP_decompose(matUDV, DUP, IPVT, TAU, WORK, Lwork)
+        if (nt < Ltrot/2 + 1) then
+! G_lambda = (P*UL)^dagger * P * V^-1 * D^-1 * U^dagger * UR^dagger
+            temp = dconjg(transpose(Prop%UUR))
+            call ZUNMQR('L', 'C', Ndim, Ndim, Ndim, matUDV(1,1), Ndim, TAU(1), temp(1,1), Ndim, WORK(1), Lwork, info)
+            do nl = 1, Ndim
+                temp(nl, :) = temp(nl, :) / DUP(nl)
+            enddo
+            call ZTRSM('L', 'U', 'N', 'N', Ndim, Ndim, Z_one, matUDV(1,1), Ndim, temp(1,1), Ndim)
+            call ZLAPMR(.false., Ndim, Ndim, temp(1,1), Ndim, IPVT(1))
+! 使用 UUL_lambda 代替 UUL
+            call ZGEMM('C', 'N', Ndim, Ndim, Ndim, Z_one, UUL_lambda(1,1), Ndim, temp(1,1), Ndim, dcmplx(0.d0, 0.d0), Gr(1,1), Ndim)
+        elseif(nt > Ltrot/2) then
+! G_lambda = (P*UL)^dagger * U * D^-1 * V * P^-1 * UR^dagger
+! 使用 UUL_lambda 代替 UUL
+            temp = dconjg(transpose(UUL_lambda))
+            call ZUNMQR('R', 'N', Ndim, Ndim, Ndim, matUDV(1, 1), Ndim, TAU(1), temp(1, 1), Ndim, WORK(1), Lwork, info)
+            do nr = 1, Ndim
+                temp(:, nr) = temp(:, nr)/ DUP(nr)
+            enddo
+            call ZTRSM('R', 'U', 'C', 'N', Ndim, Ndim, Z_one, matUDV(1, 1), Ndim, temp(1, 1), Ndim)
+            call ZLAPMT(.false., Ndim, Ndim, temp(1, 1), Ndim, IPVT(1))
+            call ZGEMM('N', 'C', Ndim, Ndim, Ndim, Z_one, temp(1, 1), Ndim, Prop%UUR(1, 1), Ndim, dcmplx(0.d0, 0.d0), Gr(1, 1), Ndim)
+        else
+            write(6,*) "illegal imaginary input in stabgreen_lambda, nt =", nt
+        endif
+
+        deallocate(WORK)
+        return
+    end subroutine stab_green_lambda
         
     subroutine stab_green_big(Prop)
 ! Arguments:
@@ -273,6 +409,65 @@ contains
     !   3) 再对 M_lambda 做一次矩阵求逆得到 Gr_lambda。
     ! 这里只追求物理正确性和稳健性，允许额外的 O(N^3) 开销。
     !------------------------------------------------------------------
+    subroutine apply_P_to_green(Gr)
+! ===================================================================
+! 从 G_0 = (1 + B)^{-1} 计算 G_λ = (1 + P[λ]B)^{-1}
+! 
+! 推导：
+!   M_0 = G_0^{-1} = 1 + B
+!   M_λ = 1 + P[λ]B = 1 + P[λ](M_0 - 1) = P[λ]M_0 + (I - P[λ])
+!   G_λ = M_λ^{-1}
+!
+! P[λ] 是对角矩阵（条件数 = 1），不会放大误差
+! ===================================================================
+        complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: Gr
+        complex(kind=8), allocatable :: M0(:,:), Mlambda(:,:)
+        real(kind=8) :: lam_i
+        integer :: i, j, info
+        logical :: all_one
+
+        ! 若当前 λ 全为 1，则 P[λ] = I，G_λ = G_0，直接返回
+        all_one = .true.
+        do i = 1, Lq
+            if (abs(NsigL_K%lambda(i) - 1.d0) > 1.d-12) then
+                all_one = .false.
+                exit
+            endif
+        enddo
+        if (all_one) return
+
+        allocate(M0(Ndim, Ndim), Mlambda(Ndim, Ndim))
+
+        ! 第一步：M0 = Gr^{-1} = 1 + B
+        M0 = Gr
+        call invert_matrix(M0, info)
+        if (info /= 0) then
+            deallocate(M0, Mlambda)
+            return
+        endif
+
+        ! 第二步：M_λ = P[λ]*M0 + (I - P[λ])
+        do i = 1, Ndim
+            lam_i = NsigL_K%lambda(i)
+            do j = 1, Ndim
+                if (i == j) then
+                    Mlambda(i, j) = dcmplx(lam_i, 0.d0) * M0(i, j) + dcmplx(1.d0 - lam_i, 0.d0)
+                else
+                    Mlambda(i, j) = dcmplx(lam_i, 0.d0) * M0(i, j)
+                endif
+            enddo
+        enddo
+
+        ! 第三步：G_λ = M_λ^{-1}
+        call invert_matrix(Mlambda, info)
+        if (info == 0) then
+            Gr = Mlambda
+        endif
+
+        deallocate(M0, Mlambda)
+        return
+    end subroutine apply_P_to_green
+
     subroutine apply_lambda_projection(Gr)
         complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: Gr
         complex(kind=8), allocatable :: M0(:,:), Mlambda(:,:)
@@ -282,7 +477,7 @@ contains
 
         ! 若当前 λ 全为 1，则直接退化到原 σ-only 情形，不做额外操作。
         all_one = .true.
-        do i = 1, Ndim
+        do i = 1, Lq
             if (abs(NsigL_K%lambda(i) - 1.d0) > 1.d-12) then
                 all_one = .false.
                 exit
@@ -364,10 +559,14 @@ contains
     
     real(kind=8) function compare_mat(Gr, Gr2) result(dif)
         complex(kind=8), dimension(Ndim, Ndim), intent(in) :: Gr, Gr2
-        ! 为与原 AFM-ISING 代码保持一致，这里使用逐元差值的最大值
-        ! 而不是所有元绝对值之和。否则在大 Ndim 下误差度量会被尺寸放大，
-        ! 导致 dif 数值看起来很大、频繁触发 “ortho unstable” 诊断。
-        dif = maxval( abs(Gr - Gr2) )
+        ! 使用与 CodeXun 相同的方式：所有元素绝对差值之和
+        integer :: nl, nr
+        dif = 0.d0
+        do nr = 1, Ndim
+            do nl = 1, Ndim
+                dif = dif + real( abs(Gr(nl, nr) - Gr2(nl, nr)) )
+            enddo
+        enddo
         return
     end function compare_mat
     
@@ -387,9 +586,12 @@ contains
         WrList%URlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUR(1:Ndim, 1:Ndim)
         WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR(1:Ndim, 1:Ndim)
         WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
+        WrList%LOGDRlist(nt_st) = Prop%LOGDUR
         if (nt == Ltrot) then
-            ! 计算 G_0 = (1 + B_tot)^{-1}（不含 P[λ]）
-            ! P[λ] 的效应在 λ 翻转接受率计算中单独处理
+            ! 计算 G_0 = (1 + B_tot)^{-1}
+            ! 注意：Prop%Gr 存储 G_0，不转换为 G_λ
+            ! 传播操作（mmult_L/R）假设 G 是 G_0
+            ! λ 的效应通过玻色部分和 λ 更新来实现
             Gr = dcmplx(0.d0, 0.d0)
             call stab_green(Gr, Prop, nt)
             Prop%Gr = Gr
@@ -405,7 +607,7 @@ contains
         character(len=*), optional, intent(in) :: flag
 ! Local: 
         complex(kind=8), dimension(Ndim, Ndim) :: Gr
-        integer :: nt_st
+        integer :: nt_st, ii
         real(kind=8) :: dif
         if (mod(nt, Nwrap) .ne. 0 .and. nt .ne. 0) then
             write(6,*) "incorrect ortholeft time slice, NT = ", nt; stop
@@ -415,26 +617,53 @@ contains
         Prop%UUR(1:Ndim, 1:Ndim) = WrList%URlist(1:Ndim, 1:Ndim, nt_st)
         Prop%VUR(1:Ndim, 1:Ndim) = WrList%VRlist(1:Ndim, 1:Ndim, nt_st)
         Prop%DUR(1:Ndim) = WrList%DRlist(1:Ndim, nt_st)
-        if (nt == 0) then ! clear URlist
-            WrList%URlist = dcmplx(0.d0, 0.d0)
-            WrList%VRlist = dcmplx(0.d0, 0.d0)
-            WrList%DRlist = dcmplx(0.d0, 0.d0)
+        Prop%LOGDUR = WrList%LOGDRlist(nt_st)  ! 恢复 LOGDUR
+        if (nt == 0) then ! reset URlist to identity/D=1 for next sweep_R
+            ! 重新初始化为单位矩阵和 D=1，而不是清空为 0
+            ! 这确保在 sweep_L 结束后，如果有 global update 访问 URlist，
+            ! 它们是有效的值
+            do ii = 0, Nst
+                WrList%URlist(:,:,ii) = ZKRON
+                WrList%VRlist(:,:,ii) = ZKRON
+                WrList%DRlist(:,ii) = dcmplx(1.d0, 0.d0)
+                WrList%LOGDRlist(ii) = 0.d0
+            enddo
         endif
         if (nt .ne. Ltrot) then
             call stab_UL(Prop)
-            ! 计算 G_0 = (1 + B_tot)^{-1}（不含 P[λ]）
+            ! 计算 G_0 = (1 + B_tot)^{-1}
+            ! 不转换为 G_λ，因为传播操作需要 G_0
             call stab_green(Gr, Prop, nt)
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
-            if (dif .ge. 5.0d-3) write(6,*) nt, dif, "left ortho unstable in RANK ", IRANK
+            if (dif .ge. 5.5d-5) write(6,*) nt, dif, "left ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
             Prop%Gr = Gr
         endif
         WrList%ULlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUL(1:Ndim, 1:Ndim)
         WrList%VLlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUL(1:Ndim, 1:Ndim)
         WrList%DLlist(1:Ndim, nt_st) = Prop%DUL(1:Ndim)
+        WrList%LOGDLlist(nt_st) = Prop%LOGDUL  ! 存储 LOGDUL
         return
     end subroutine Wrap_L
+
+    subroutine Wrap_L_store(Prop, WrList, nt)
+        ! 只存储 UUL 到 WrapList，不做稳定化检查和 G 重建
+        ! 用于 global update 中
+        class(Propagator), intent(inout) :: Prop
+        class(WrapList), intent(inout) :: WrList
+        integer, intent(in) :: nt
+        integer :: nt_st
+        if (mod(nt, Nwrap) .ne. 0 .and. nt .ne. 0) then
+            write(6,*) "incorrect ortholeft time slice, NT = ", nt; stop
+        endif
+        nt_st = int(nt/Nwrap)
+        WrList%ULlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUL(1:Ndim, 1:Ndim)
+        WrList%VLlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUL(1:Ndim, 1:Ndim)
+        WrList%DLlist(1:Ndim, nt_st) = Prop%DUL(1:Ndim)
+        WrList%LOGDLlist(nt_st) = Prop%LOGDUL  ! 存储 LOGDUL
+        return
+    end subroutine Wrap_L_store
     
     subroutine Wrap_R(Prop, WrList, nt, flag)
 ! Arguments: 
@@ -444,7 +673,7 @@ contains
         character(len=*), optional, intent(in) :: flag
 ! Local: 
         complex(kind=8), dimension(Ndim, Ndim) :: Gr
-        integer :: nt_st
+        integer :: nt_st, ii
         real(kind=8) :: dif
         if (mod(nt, Nwrap) .ne. 0 .and. nt .ne. 0) then
             write(6,*) "incorrect orthoright time slice, NT = ", nt; stop
@@ -454,26 +683,55 @@ contains
         Prop%UUL(1:Ndim, 1:Ndim) = WrList%ULlist(1:Ndim, 1:Ndim, nt_st)
         Prop%VUL(1:Ndim, 1:Ndim) = WrList%VLlist(1:Ndim, 1:Ndim, nt_st)
         Prop%DUL(1:Ndim) = WrList%DLlist(1:Ndim, nt_st)
+        Prop%LOGDUL = WrList%LOGDLlist(nt_st)  ! 恢复 LOGDUL
         if (nt == Ltrot) then
-            WrList%ULlist = dcmplx(0.d0, 0.d0)
-            WrList%VLlist = dcmplx(0.d0, 0.d0)
-            WrList%DLlist = dcmplx(0.d0, 0.d0)
+            ! 清空 ULlist，但重新初始化为单位矩阵和 D=1
+            ! 这确保在下一次 sweep_L 之前，如果有 global update 访问 ULlist，
+            ! 它们是有效的值（而不是 0）
+            do ii = 0, Nst
+                WrList%ULlist(:,:,ii) = ZKRON
+                WrList%VLlist(:,:,ii) = ZKRON
+                WrList%DLlist(:,ii) = dcmplx(1.d0, 0.d0)
+                WrList%LOGDLlist(ii) = 0.d0
+            enddo
         endif
         if (nt .ne. 0) then
             call stab_UR(Prop)
-            ! 计算 G_0 = (1 + B_tot)^{-1}（不含 P[λ]）
+            ! 计算 G_0 = (1 + B_tot)^{-1}
+            ! 不转换为 G_λ，因为传播操作需要 G_0
             call stab_green(Gr, Prop, nt)
+            
+            
             dif = compare_mat(Gr, Prop%Gr)
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
-            if (dif .ge. 5.0d-3) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK
+            if (dif .ge. 5.5d-5) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
             Prop%Gr = Gr
         endif
         WrList%URlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUR(1:Ndim, 1:Ndim)
         WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR(1:Ndim, 1:Ndim)
         WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
+        WrList%LOGDRlist(nt_st) = Prop%LOGDUR  ! 存储 LOGDUR
         return
     end subroutine Wrap_R
+
+    subroutine Wrap_R_store(Prop, WrList, nt)
+        ! 只存储 UUR 到 WrapList，不做稳定化检查和 G 重建
+        ! 用于 global update 中
+        class(Propagator), intent(inout) :: Prop
+        class(WrapList), intent(inout) :: WrList
+        integer, intent(in) :: nt
+        integer :: nt_st
+        if (mod(nt, Nwrap) .ne. 0 .and. nt .ne. 0) then
+            write(6,*) "incorrect orthoright time slice, NT = ", nt; stop
+        endif
+        nt_st = int(nt/Nwrap)
+        WrList%URlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUR(1:Ndim, 1:Ndim)
+        WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR(1:Ndim, 1:Ndim)
+        WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
+        WrList%LOGDRlist(nt_st) = Prop%LOGDUR  ! 存储 LOGDUR
+        return
+    end subroutine Wrap_R_store
 
     subroutine Wrap_tau(Prop, PropGr, WrList, nt)
 ! Arguments: 
@@ -496,15 +754,15 @@ contains
 ! stabilization test
         dif = compare_mat(Gr_tmp%Gr0t, PropGr%Gr0t)
         if (dif > PropGr%Xmaxm(1)) PropGr%Xmaxm(1) = dif
-        if (dif .ge. 5.0d-3) write(6,*) nt, dif, "GR0T ortho unstable in RANK ", IRANK
+        if (dif .ge. 5.5d-5) write(6,*) nt, dif, "GR0T ortho unstable in RANK ", IRANK
         PropGr%Xmeanm(1) = PropGr%Xmeanm(1) + dif
         dif = compare_mat(Gr_tmp%Grt0, PropGr%Grt0)
         if (dif > PropGr%Xmaxm(2)) PropGr%Xmaxm(2) = dif
-        if (dif .ge. 5.0d-3) write(6,*) nt, dif, "GRT0 ortho unstable in RANK ", IRANK
+        if (dif .ge. 5.5d-5) write(6,*) nt, dif, "GRT0 ortho unstable in RANK ", IRANK
         PropGr%Xmeanm(2) = PropGr%Xmeanm(2) + dif
         dif = compare_mat(Gr_tmp%Grtt, PropGr%Grtt)
         if (dif > PropGr%Xmaxm(3)) PropGr%Xmaxm(3) = dif
-        if (dif .ge. 5.0d-3) write(6,*) nt, dif, "GRTT ortho unstable in RANK ", IRANK
+        if (dif .ge. 5.5d-5) write(6,*) nt, dif, "GRTT ortho unstable in RANK ", IRANK
         PropGr%Xmeanm(3) = PropGr%Xmeanm(3) + dif
         PropGr%Gr00 = Gr_tmp%Gr00
         PropGr%Gr0t = Gr_tmp%Gr0t

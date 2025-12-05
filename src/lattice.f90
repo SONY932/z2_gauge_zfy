@@ -8,6 +8,7 @@ module Mylattice ! definition on space geometry
         integer, dimension(:,:), allocatable :: L_bonds, nn_bonds, LT_bonds, imj
         integer, dimension(:),   allocatable :: group_1, group_2, group_3, group_4 ! 棋盘分解用的组
         integer, dimension(:,:), allocatable :: bond_bonds ! 近邻键列表
+        integer, dimension(:,:), allocatable :: site_bonds ! 格点到相邻四条键的映射（用于高斯约束）
         real(kind=8), dimension(:,:), allocatable :: xk_v, aimj_v, k_dot_r
         real(kind=8) :: a1_v(2), a2_v(2), b1_v(2), b2_v(2)
     contains
@@ -100,6 +101,35 @@ contains
                 endif
             endif
         enddo 
+! 定义格点到相邻键的映射（高斯约束用）
+! site_bonds(ii, 1:4) 存储与格点 ii 相邻的四条键的编号
+! 对于格点 ii，相邻的四条键是：
+!   1. ii -> right neighbor (横向键，从 ii 出发)
+!   2. ii -> up neighbor (纵向键，从 ii 出发)
+!   3. left neighbor -> ii (横向键，终点是 ii)
+!   4. down neighbor -> ii (纵向键，终点是 ii)
+        allocate(Latt%site_bonds(Lq, 1:4))
+        do ii = 1, Lq
+            ix = Latt%n_list(ii, 1)
+            iy = Latt%n_list(ii, 2)
+            ! 键 1: ii -> right (横向键从 ii 出发)
+            jx = npbc(ix + 1, Nlx)
+            jj = Latt%inv_n_list(jx, iy)
+            Latt%site_bonds(ii, 1) = Latt%inv_bond_list(ii, jj)
+            ! 键 2: ii -> up (纵向键从 ii 出发)
+            jy = npbc(iy + 1, Nly)
+            jj = Latt%inv_n_list(ix, jy)
+            Latt%site_bonds(ii, 2) = Latt%inv_bond_list(ii, jj)
+            ! 键 3: left -> ii (横向键终点是 ii)
+            jx = npbc(ix - 1, Nlx)
+            jj = Latt%inv_n_list(jx, iy)
+            Latt%site_bonds(ii, 3) = Latt%inv_bond_list(jj, ii)
+            ! 键 4: down -> ii (纵向键终点是 ii)
+            jy = npbc(iy - 1, Nly)
+            jj = Latt%inv_n_list(ix, jy)
+            Latt%site_bonds(ii, 4) = Latt%inv_bond_list(jj, ii)
+        enddo
+
 ! 定义近邻键列表(规范场专用)
         allocate(Latt%bond_bonds(2*Lq, 0:6))
         do nc = 1, 2*Lq
@@ -237,6 +267,7 @@ contains
         if (allocated(this%group_3))       deallocate(this%group_3)
         if (allocated(this%group_4))       deallocate(this%group_4)
         if (allocated(this%bond_bonds))    deallocate(this%bond_bonds)
+        if (allocated(this%site_bonds))    deallocate(this%site_bonds)
         if (allocated(this%xk_v))          deallocate(this%xk_v)
         if (allocated(this%aimj_v))        deallocate(this%aimj_v)
         if (allocated(this%k_dot_r))       deallocate(this%k_dot_r)

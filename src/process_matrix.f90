@@ -8,6 +8,9 @@ module ProcessMatrix
         complex(kind=8), dimension(:), allocatable :: DUL, DUR
         complex(kind=8), dimension(:,:), allocatable :: Gr
         real(kind=8) :: Xmaxm, Xmeanm
+        ! Log-scale storage to avoid overflow
+        real(kind=8) :: LOGDUR, LOGDUL  ! 累积的对数尺度
+        real(kind=8) :: SIGN_DUR, SIGN_DUL  ! 累积的符号 (+1 or -1)
     contains
         procedure :: make => Prop_make
         procedure :: asgn => Prop_assign
@@ -26,6 +29,8 @@ module ProcessMatrix
     type, public :: WrapList
         complex(kind=8), dimension(:,:,:), allocatable :: URlist, VRlist, ULlist, VLlist
         complex(kind=8), dimension(:,:), allocatable :: DRlist, DLlist
+        ! Log-scale storage for each time segment
+        real(kind=8), dimension(:), allocatable :: LOGDRlist, LOGDLlist
     contains
         procedure :: make => Wrlist_make
         procedure :: asgn => Wrlist_assign
@@ -52,6 +57,9 @@ contains
         this%UUL = ZKRON; this%VUL = ZKRON; this%DUL = dcmplx(1.d0, 0.d0)
         this%Gr = ZKRON
         this%Xmaxm = 0.d0; this%Xmeanm = 0.d0
+        ! 初始化 log-scale 变量
+        this%LOGDUR = 0.d0; this%LOGDUL = 0.d0
+        this%SIGN_DUR = 1.d0; this%SIGN_DUL = 1.d0
         return
     end subroutine Prop_make
     
@@ -62,6 +70,9 @@ contains
         this%UUR = that%UUR; this%VUR = that%VUR; this%DUR = that%DUR
         this%Gr = that%Gr
         this%Xmaxm = that%Xmaxm; this%Xmeanm = that%Xmeanm
+        ! 复制 log-scale 变量
+        this%LOGDUR = that%LOGDUR; this%LOGDUL = that%LOGDUL
+        this%SIGN_DUR = that%SIGN_DUR; this%SIGN_DUL = that%SIGN_DUL
         return
     end subroutine Prop_assign
     
@@ -106,8 +117,10 @@ contains
         allocate(this%URlist(Ndim, Ndim, 0:Nst), this%ULlist(Ndim, Ndim, 0:Nst))
         allocate(this%VRlist(Ndim, Ndim, 0:Nst), this%VLlist(Ndim, Ndim, 0:Nst))
         allocate(this%DRlist(Ndim, 0:Nst), this%DLlist(Ndim, 0:Nst))
+        allocate(this%LOGDRlist(0:Nst), this%LOGDLlist(0:Nst))
         this%URlist = dcmplx(0.d0, 0.d0); this%ULlist = dcmplx(0.d0, 0.d0); this%VRlist = dcmplx(0.d0, 0.d0)
         this%VLlist = dcmplx(0.d0, 0.d0); this%DRlist = dcmplx(0.d0, 0.d0); this%DLlist = dcmplx(0.d0, 0.d0)
+        this%LOGDRlist = 0.d0; this%LOGDLlist = 0.d0
         return
     end subroutine Wrlist_make
 
@@ -116,6 +129,7 @@ contains
         class(WrapList), intent(in) :: that
         this%URlist = that%URlist; this%ULlist = that%ULlist; this%VRlist = that%VRlist
         this%VLlist = that%VLlist; this%DRlist = that%DRlist; this%DLlist = that%DLlist
+        this%LOGDRlist = that%LOGDRlist; this%LOGDLlist = that%LOGDLlist
         return
     end subroutine Wrlist_assign
     
@@ -123,6 +137,7 @@ contains
         type(WrapList), intent(inout) :: this
         deallocate(this%URlist, this%VRlist, this%ULlist, this%VLlist)
         deallocate(this%DRlist, this%DLlist)
+        deallocate(this%LOGDRlist, this%LOGDLlist)
         return
     end subroutine Wrlist_clear
     

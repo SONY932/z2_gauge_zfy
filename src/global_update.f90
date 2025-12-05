@@ -1,6 +1,9 @@
 module GlobalUpdate_mod ! a combination of shift&Wolff update
     use GlobalK_mod
     use Stabilize_mod
+    use Multiply_mod, only: propK_pre, propT_pre
+    use MyLattice, only: ZKRON
+    use Fields_mod, only: gauss_boson_ratio_sigma
     use DQMC_Model_mod
     use calc_basic
     implicit none
@@ -135,15 +138,25 @@ contains
     real(kind=8) function compute_space_log_ratio(bond_idx, mask)
         integer, intent(in) :: bond_idx
         logical, intent(in) :: mask(:)
-        real(kind=8) :: alpha
+        real(kind=8) :: alpha, gauss_ratio
         integer :: tau
         compute_space_log_ratio = 0.d0
         alpha = Dtau * J
-        if (alpha == 0.d0) return
+        
         do tau = 1, Ltrot
             if (.not. mask(tau)) cycle
-            compute_space_log_ratio = compute_space_log_ratio + plaquette_log_ratio(bond_idx, tau, 1, alpha)
-            compute_space_log_ratio = compute_space_log_ratio + plaquette_log_ratio(bond_idx, tau, 4, alpha)
+            ! Plaquette 贡献
+            if (alpha /= 0.d0) then
+                compute_space_log_ratio = compute_space_log_ratio + plaquette_log_ratio(bond_idx, tau, 1, alpha)
+                compute_space_log_ratio = compute_space_log_ratio + plaquette_log_ratio(bond_idx, tau, 4, alpha)
+            endif
+            ! 高斯投影玻色贡献
+            ! 注意：gauss_boson_ratio_sigma 返回 1 或 -1
+            ! 如果是 -1，log 未定义，我们使用 abs() 处理（与 local update 一致）
+            gauss_ratio = gauss_boson_ratio_sigma(bond_idx, tau, sigma_new, &
+                -sigma_new(bond_idx, tau), NsigL_K%lambda, Latt)
+            ! 使用绝对值，符号问题通过 reweighting 处理
+            compute_space_log_ratio = compute_space_log_ratio + log(abs(gauss_ratio) + 1.d-300)
         enddo
         return
     end function compute_space_log_ratio
@@ -240,6 +253,9 @@ contains
         
         log_ratio_fermion = 0.d0
         call this%flip(iseed, size_cluster, log_ratio_space)
+        
+        ! 按照 CodeXun 的顺序：先 Wrap_L，再 propT_L，再 GlobalK_prop_L
+        ! 这样 Wrap_L 会在每个 Nwrap 间隔重建 Green 函数，消除累积误差
         do nt = Ltrot, 1, -1
             if (mod(nt, Nwrap) == 0) then
                 call Wrap_L(this%propU, this%wrU, nt)
@@ -255,12 +271,14 @@ contains
         if (min(0.d0, log_ratio_total) .ge. log(max(random, RATIO_EPS))) then
             call Acc_Kg%count(.true.)
             NsigL_K%sigma = sigma_new
+            ! 接受：复制 prop 和 wrlist
             call PropU%asgn(this%propU); call PropD%asgn(this%propD)
             call WrU%asgn(this%wrU);     call WrD%asgn(this%wrD)
             is_beta = .false.
         else
             call Acc_Kg%count(.false.)
             sigma_new = NsigL_K%sigma
+            ! 拒绝：恢复原始 prop 和 wrlist
             call this%propU%asgn(PropU); call this%propD%asgn(PropD)
             call this%wrU%asgn(WrU);     call this%wrD%asgn(WrD)
             is_beta = .true. 
@@ -284,6 +302,9 @@ contains
         call this%flip(iseed, size_cluster, log_ratio_space)
         call Wrap_R(this%propU, this%wrU, 0)
         call Wrap_R(this%propD, this%wrD, 0)
+        
+        ! 按照 CodeXun 的顺序：先 GlobalK_prop_R，再 propT_R，最后 Wrap_R
+        ! 这样 Wrap_R 会在每个 Nwrap 间隔重建 Green 函数，消除累积误差
         do nt = 1, Ltrot
             call GlobalK_prop_R(this%propU, this%propD, log_ratio_fermion, sigma_new, nt)
             call propT_R(this%propU, this%propD, NsigL_K%lambda, nt)
@@ -297,12 +318,14 @@ contains
         if (min(0.d0, log_ratio_total) .ge. log(max(random, RATIO_EPS))) then
             call Acc_Kg%count(.true.)
             NsigL_K%sigma = sigma_new
+            ! 接受：复制 prop 和 wrlist
             call PropU%asgn(this%propU); call PropD%asgn(this%propD)
             call WrU%asgn(this%wrU);     call WrD%asgn(this%wrD)
             is_beta = .true.
         else
             call Acc_Kg%count(.false.)
             sigma_new = NsigL_K%sigma
+            ! 拒绝：恢复原始 prop 和 wrlist
             call this%propU%asgn(PropU); call this%propD%asgn(PropD)
             call this%wrU%asgn(WrU);     call this%wrD%asgn(WrD)
             is_beta = .false. 
@@ -336,6 +359,54 @@ contains
         return
     end subroutine Global_sweep
     
+    subroutine rebuild_stabilization_chain(PropU, PropD, WrU, WrD)
+        ! 重新准备稳定化链
+        ! 在 global update 被接受后调用，确保 WrList 中的 UDV 分解与当前 sigma 一致
+        ! 完全按照 Local_sweep_pre 的方式进行初始化
+        class(Propagator), intent(inout) :: PropU, PropD
+        class(WrapList),   intent(inout) :: WrU, WrD
+        integer :: nt
+        
+        ! 重置 Propagator 的 UDV 分解（与 Prop_make 一致：UUR/VUR 为单位矩阵，DUR 为 1）
+        PropU%UUR = ZKRON; PropU%VUR = ZKRON; PropU%DUR = dcmplx(1.d0, 0.d0)
+        PropU%UUL = ZKRON; PropU%VUL = ZKRON; PropU%DUL = dcmplx(1.d0, 0.d0)
+        PropU%Gr = ZKRON  ! 重置 Green 函数
+        PropD%UUR = ZKRON; PropD%VUR = ZKRON; PropD%DUR = dcmplx(1.d0, 0.d0)
+        PropD%UUL = ZKRON; PropD%VUL = ZKRON; PropD%DUL = dcmplx(1.d0, 0.d0)
+        PropD%Gr = ZKRON  ! 重置 Green 函数
+        
+        ! 清除 WrapList（与 Wrlist_make 一致）
+        WrU%URlist = dcmplx(0.d0, 0.d0)
+        WrU%VRlist = dcmplx(0.d0, 0.d0)
+        WrU%DRlist = dcmplx(0.d0, 0.d0)
+        WrD%URlist = dcmplx(0.d0, 0.d0)
+        WrD%VRlist = dcmplx(0.d0, 0.d0)
+        WrD%DRlist = dcmplx(0.d0, 0.d0)
+        ! 初始化 ULlist 为单位矩阵，DLlist 为 1
+        ! 这确保在 stab_green 中 matUDV 不会是奇异的
+        do nt = 0, Ltrot/Nwrap
+            WrU%ULlist(:,:,nt) = ZKRON
+            WrU%VLlist(:,:,nt) = ZKRON
+            WrU%DLlist(:,nt) = dcmplx(1.d0, 0.d0)
+            WrD%ULlist(:,:,nt) = ZKRON
+            WrD%VLlist(:,:,nt) = ZKRON
+            WrD%DLlist(:,nt) = dcmplx(1.d0, 0.d0)
+        enddo
+        
+        ! 重新准备稳定化链（与 Local_sweep_pre 完全一致）
+        call Wrap_pre(PropU, WrU, 0)
+        call Wrap_pre(PropD, WrD, 0)
+        do nt = 1, Ltrot
+            if (RT > Zero) call propK_pre(PropU, PropD, NsigL_K%sigma, nt)
+            call propT_pre(PropU, PropD, NsigL_K%lambda, nt)
+            if (mod(nt, Nwrap) == 0) then
+                call Wrap_pre(PropU, WrU, nt)
+                call Wrap_pre(PropD, WrD, nt)
+            endif
+        enddo
+        return
+    end subroutine rebuild_stabilization_chain
+
     subroutine Global_control_print()
         include 'mpif.h'
         real(kind=8) :: collect
@@ -352,4 +423,5 @@ contains
         endif
         return
     end subroutine Global_control_print
+
 end module GlobalUpdate_mod

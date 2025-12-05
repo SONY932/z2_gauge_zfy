@@ -66,9 +66,23 @@ contains
         complex(kind=8) :: phase_i_p, phase_i_m, phase_j_p, phase_j_m
         real(kind=8) :: Ai, Aj
 
+        ! 从 G_0 获取 Green 函数
+        ! 注意：P[λ] 投影对含时 Green 函数的影响通过简单的对角缩放处理
+        ! G(i,j) → λ_i × G(i,j) × λ_j，这是一个 O(N²) 的高效操作
         Gr00u  = PropGrU%Gr00; Grttu  = PropGrU%Grtt; Grt0u = PropGrU%Grt0; Gr0tu = PropGrU%Gr0t
-        Gr00uc = ZKRON - transpose(Gr00u); Grttuc = ZKRON - transpose(Grttu)
         Gr00d  = PropGrD%Gr00; Grttd  = PropGrD%Grtt; Grt0d = PropGrD%Grt0; Gr0td = PropGrD%Gr0t
+        
+        ! 应用 P[λ] 投影（简单对角缩放，O(N²)）
+        call apply_lambda_projection(Gr00u)
+        call apply_lambda_projection(Grttu)
+        call apply_lambda_projection(Grt0u)
+        call apply_lambda_projection(Gr0tu)
+        call apply_lambda_projection(Gr00d)
+        call apply_lambda_projection(Grttd)
+        call apply_lambda_projection(Grt0d)
+        call apply_lambda_projection(Gr0td)
+        
+        Gr00uc = ZKRON - transpose(Gr00u); Grttuc = ZKRON - transpose(Grttu)
         Gr00dc = ZKRON - transpose(Gr00d); Grttdc = ZKRON - transpose(Grttd)
 
         do ii = 1, Ndim
@@ -131,4 +145,36 @@ contains
         enddo
         return
     end subroutine Obs_tau_calc
+
+    subroutine apply_lambda_projection(Gr)
+        ! 对 Green 函数应用简单的 P[λ] 投影（对角缩放）
+        ! 这是一个 O(N²) 的高效操作
+        ! G(i, j) → λ_i × G(i, j) × λ_j
+        ! 这等价于 P[λ] × G × P[λ]
+        complex(kind=8), dimension(Ndim, Ndim), intent(inout) :: Gr
+        integer :: i, j
+        real(kind=8) :: lam_i, lam_j
+        logical :: all_one
+        
+        ! 快速检查：如果 λ 全为 1，直接返回
+        all_one = .true.
+        do i = 1, Lq
+            if (abs(NsigL_K%lambda(i) - 1.d0) > 1.d-12) then
+                all_one = .false.
+                exit
+            endif
+        enddo
+        if (all_one) return
+        
+        ! 应用 P[λ] × G × P[λ]
+        do j = 1, Ndim
+            lam_j = NsigL_K%lambda(j)
+            do i = 1, Ndim
+                lam_i = NsigL_K%lambda(i)
+                Gr(i, j) = Gr(i, j) * dcmplx(lam_i * lam_j, 0.d0)
+            enddo
+        enddo
+        return
+    end subroutine apply_lambda_projection
+
 end module ObserTau_mod

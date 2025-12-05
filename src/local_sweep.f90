@@ -90,6 +90,32 @@ contains
         class(WrapList),   intent(inout) :: WrU, WrD
         integer :: nt
         call this%reset(.false.)
+        
+        ! 重置 log-scale 变量（每次重新构建稳定化链时）
+        PropU%LOGDUR = 0.d0; PropU%LOGDUL = 0.d0
+        PropU%SIGN_DUR = 1.d0; PropU%SIGN_DUL = 1.d0
+        PropD%LOGDUR = 0.d0; PropD%LOGDUL = 0.d0
+        PropD%SIGN_DUR = 1.d0; PropD%SIGN_DUL = 1.d0
+        
+        ! 重置 DUR/DUL 为 1（因为尺度现在存在 LOGDUR/LOGDUL 中）
+        PropU%DUR = dcmplx(1.d0, 0.d0); PropU%DUL = dcmplx(1.d0, 0.d0)
+        PropD%DUR = dcmplx(1.d0, 0.d0); PropD%DUL = dcmplx(1.d0, 0.d0)
+        
+        ! 初始化 ULlist 和 URlist 为有效值（单位矩阵和 D=1）
+        ! 这确保在第一次 sweep_R 之前 ULlist 已经有有效数据
+        do nt = 0, Ltrot/Nwrap
+            WrU%ULlist(:,:,nt) = ZKRON
+            WrU%VLlist(:,:,nt) = ZKRON
+            WrU%DLlist(:,nt) = dcmplx(1.d0, 0.d0)
+            WrU%LOGDLlist(nt) = 0.d0
+            WrU%LOGDRlist(nt) = 0.d0
+            WrD%ULlist(:,:,nt) = ZKRON
+            WrD%VLlist(:,:,nt) = ZKRON
+            WrD%DLlist(:,nt) = dcmplx(1.d0, 0.d0)
+            WrD%LOGDLlist(nt) = 0.d0
+            WrD%LOGDRlist(nt) = 0.d0
+        enddo
+        
         call Wrap_pre(PropU, WrU, 0)
         call Wrap_pre(PropD, WrD, 0)
         do nt = 1, Ltrot
@@ -160,8 +186,9 @@ contains
         integer :: n_lambda_accept, n_lambda_total
 
         call this%reset(toggle)
+        ! 每个 bin 开始时重新准备稳定化链，确保一致性
+        call this%pre(PropU, PropD, WrU, WrD)
         Nobs = 0; Nobst = 0
-        n_lambda_accept = 0; n_lambda_total = 0
         do nsw = 1, Nsweep
             if(is_beta) then
                 call this%sweep_L(PropU, PropD, WrU, WrD, iseed, Nobs)
@@ -170,22 +197,9 @@ contains
                 call this%sweep_R(PropU, PropD, WrU, WrD, iseed, toggle, Nobs, Nobst)
                 call this%sweep_L(PropU, PropD, WrU, WrD, iseed, Nobs)
             endif
-            ! 全局 λ 更新：暂时禁用
-            ! 原因：当前的接受率公式使用 G_0，但正确的公式需要 G_λ
-            ! 这会导致 λ 配置偏离正确分布
-            ! TODO: 实现正确的 λ 更新需要在 wrap 时计算 det[1 + P[λ] B]
-            ! call Global_lambda_update(PropU%Gr, PropD%Gr, iseed, n_lambda_accept, n_lambda_total)
-        enddo
-        ! 更新 λ 接受率统计（通过 count 方法）
-        ! 注意：由于使用参数传递，这里需要手动调用 count
-        ! Acc_lambda 的统计已在 Global_lambda_update 返回的计数器中
-        ! 这里我们使用一个简化的方法：每次接受调用 count(.true.)，每次拒绝调用 count(.false.)
-        ! 但由于 count 期望每次调用一次，我们需要循环
-        do nsw = 1, n_lambda_accept
-            call Acc_lambda%count(.true.)
-        enddo
-        do nsw = 1, n_lambda_total - n_lambda_accept
-            call Acc_lambda%count(.false.)
+! λ 更新
+            call Global_lambda_update(PropU%Gr, PropD%Gr, iseed, n_lambda_accept, n_lambda_total)
+            call update_lambda_acc(n_lambda_accept, n_lambda_total)
         enddo
         call Obs_equal%ave(Nobs)
         if (toggle) call Obs_tau%ave(Nobst)
@@ -225,4 +239,15 @@ contains
         endif
         return
     end subroutine Therm_control_print
+
+    subroutine update_lambda_acc(n_accept, n_total)
+        integer, intent(in) :: n_accept, n_total
+        integer :: ii
+        do ii = 1, n_accept
+            call Acc_lambda%count(.true.)
+        enddo
+        do ii = 1, n_total - n_accept
+            call Acc_lambda%count(.false.)
+        enddo
+    end subroutine update_lambda_acc
 end module LocalSweep_mod

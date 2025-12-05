@@ -6,37 +6,54 @@ module Multiply_mod
     
 contains
     subroutine propK_pre(Propu, Propd, sigma, nt)
+        ! 参考 CodeXun：只更新 UUR，不做 wrap
         class(Propagator), intent(inout) :: Propu, Propd
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: nt
+        
+        ! 使用完整的 mmult_R，不是分组版本
         call Op_K%mmult_R(Propu%UUR, Latt, sigma, nt, 1)
         call Op_K%mmult_R(Propd%UUR, Latt, sigma, nt, 1)
         return
     end subroutine propK_pre
     
     subroutine propK_L(Propu, Propd, sigma, nt)
+        ! 参考 CodeXun：向左传播
+        ! 1. wrap G（mmult_L + mmult_R）
+        ! 2. 更新 UUL
         class(Propagator), intent(inout) :: Propu, Propd
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: nt
-        call Op_K%mmult_L(Propu%Gr, Latt, sigma, nt,  1)
-        call Op_K%mmult_L(Propd%Gr, Latt, sigma, nt,  1)
+        
+        ! 只做一次 wrap，不是 4 次！
+        call Op_K%mmult_L(Propu%Gr, Latt, sigma, nt, 1)
+        call Op_K%mmult_L(Propd%Gr, Latt, sigma, nt, 1)
         call Op_K%mmult_R(Propu%Gr, Latt, sigma, nt, -1)
         call Op_K%mmult_R(Propd%Gr, Latt, sigma, nt, -1)
-        call Op_K%mmult_L(Propu%UUL, Latt, sigma, nt,  1)
-        call Op_K%mmult_L(Propd%UUL, Latt, sigma, nt,  1)
+        
+        ! 更新 UUL
+        call Op_K%mmult_L(Propu%UUL, Latt, sigma, nt, 1)
+        call Op_K%mmult_L(Propd%UUL, Latt, sigma, nt, 1)
         return
     end subroutine propK_L
     
     subroutine propK_R(Propu, Propd, sigma, nt)
+        ! 参考 CodeXun：向右传播
+        ! 1. wrap G（mmult_R + mmult_L）
+        ! 2. 更新 UUR
         class(Propagator), intent(inout) :: Propu, Propd
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma
         integer, intent(in) :: nt
-        call Op_K%mmult_R(Propu%Gr, Latt, sigma, nt,  1)
-        call Op_K%mmult_R(Propd%Gr, Latt, sigma, nt,  1)
+        
+        ! 只做一次 wrap，不是 4 次！
+        call Op_K%mmult_R(Propu%Gr, Latt, sigma, nt, 1)
+        call Op_K%mmult_R(Propd%Gr, Latt, sigma, nt, 1)
         call Op_K%mmult_L(Propu%Gr, Latt, sigma, nt, -1)
         call Op_K%mmult_L(Propd%Gr, Latt, sigma, nt, -1)
-        call Op_K%mmult_R(Propu%UUR, Latt, sigma, nt,  1)
-        call Op_K%mmult_R(Propd%UUR, Latt, sigma, nt,  1)
+        
+        ! 更新 UUR
+        call Op_K%mmult_R(Propu%UUR, Latt, sigma, nt, 1)
+        call Op_K%mmult_R(Propd%UUR, Latt, sigma, nt, 1)
         return
     end subroutine propK_R
     
