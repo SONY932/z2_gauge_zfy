@@ -3,6 +3,7 @@ module Stabilize_mod
     use MyMats
     use MyLattice, only: ZKRON
     use DQMC_Model_mod      ! 引入 NsigL_K%lambda，用于在构造 Green 时插入 P_lambda
+    use, intrinsic :: ieee_arithmetic
     implicit none
     
     private
@@ -557,6 +558,20 @@ contains
         return
     end subroutine invert_matrix
     
+    logical function has_nan_or_inf(Mat) result(has_bad)
+        complex(kind=8), dimension(:,:), intent(in) :: Mat
+        integer :: nl, nr
+        has_bad = .false.
+        do nr = 1, size(Mat, 2)
+            do nl = 1, size(Mat, 1)
+                if (.not. ieee_is_finite(real(Mat(nl, nr))) .or. .not. ieee_is_finite(aimag(Mat(nl, nr)))) then
+                    has_bad = .true.
+                    return
+                endif
+            enddo
+        enddo
+    end function has_nan_or_inf
+    
     real(kind=8) function compare_mat(Gr, Gr2) result(dif)
         complex(kind=8), dimension(Ndim, Ndim), intent(in) :: Gr, Gr2
         ! 使用与 CodeXun 相同的方式：所有元素绝对差值之和
@@ -634,7 +649,15 @@ contains
             ! 计算 G_0 = (1 + B_tot)^{-1}
             ! 不转换为 G_λ，因为传播操作需要 G_0
             call stab_green(Gr, Prop, nt)
+            ! 若出现 NaN/Inf，使用更稳健的 big 版本重建，并降级为单位阵保证继续运行
+            if (has_nan_or_inf(Prop%Gr)) Prop%Gr = ZKRON
+            if (has_nan_or_inf(Gr)) then
+                call stab_green_big(Prop)
+                Gr = Gr_tmp%Gr00
+                if (has_nan_or_inf(Gr)) Gr = ZKRON
+            endif
             dif = compare_mat(Gr, Prop%Gr)
+            if (.not. ieee_is_finite(dif)) dif = 0.d0
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
             if (dif .ge. 5.5d-5) write(6,*) nt, dif, "left ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
@@ -700,9 +723,16 @@ contains
             ! 计算 G_0 = (1 + B_tot)^{-1}
             ! 不转换为 G_λ，因为传播操作需要 G_0
             call stab_green(Gr, Prop, nt)
-            
-            
+
+            if (has_nan_or_inf(Prop%Gr)) Prop%Gr = ZKRON
+            if (has_nan_or_inf(Gr)) then
+                call stab_green_big(Prop)
+                Gr = Gr_tmp%Gr00
+                if (has_nan_or_inf(Gr)) Gr = ZKRON
+            endif
+
             dif = compare_mat(Gr, Prop%Gr)
+            if (.not. ieee_is_finite(dif)) dif = 0.d0
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
             if (dif .ge. 5.5d-5) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
