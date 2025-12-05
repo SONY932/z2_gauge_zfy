@@ -39,4 +39,4 @@
  Accept_lambda_local                            :   5.9999999999999998E-002
  Max diff Matrix                                :   10.540811054408550     
  Mean diff Matrix                               :   2.2851556152307499     
- Tot CPU time                                   :   59.265340866999999     
+ Tot CPU time                                   :   59.201594354999997     

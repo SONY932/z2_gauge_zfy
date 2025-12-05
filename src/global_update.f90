@@ -268,6 +268,10 @@ contains
             endif
             call propT_L(this%propU, this%propD, NsigL_K%lambda, nt)
             call GlobalK_prop_L(this%propU, this%propD, log_ratio_fermion, sigma_new, sigma_curr, nt)
+            if (mod(nt, Nwrap) == 0) then
+                call Wrap_L_store(this%propU, this%wrU, nt)
+                call Wrap_L_store(this%propD, this%wrD, nt)
+            endif
         enddo
         call Wrap_L(this%propU, this%wrU, 0)
         call Wrap_L(this%propD, this%wrD, 0)
