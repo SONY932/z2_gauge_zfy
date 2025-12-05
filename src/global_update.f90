@@ -249,9 +249,11 @@ contains
 ! Local:
         real(kind=8), external :: ranf
         real(kind=8) :: log_ratio_fermion, log_ratio_space, log_ratio_total, random
+        real(kind=8), dimension(2*Lq, Ltrot) :: sigma_curr
         integer :: nt
         
         log_ratio_fermion = 0.d0
+        sigma_curr = NsigL_K%sigma
         call this%flip(iseed, size_cluster, log_ratio_space)
         
         ! 按照 CodeXun 的顺序：先 Wrap_L，再 propT_L，再 GlobalK_prop_L
@@ -262,7 +264,7 @@ contains
                 call Wrap_L(this%propD, this%wrD, nt)
             endif
             call propT_L(this%propU, this%propD, NsigL_K%lambda, nt)
-            call GlobalK_prop_L(this%propU, this%propD, log_ratio_fermion, sigma_new, nt)
+            call GlobalK_prop_L(this%propU, this%propD, log_ratio_fermion, sigma_new, sigma_curr, nt)
         enddo
         call Wrap_L(this%propU, this%wrU, 0)
         call Wrap_L(this%propD, this%wrD, 0)
@@ -296,9 +298,11 @@ contains
 ! Local:
         real(kind=8), external :: ranf
         real(kind=8) :: log_ratio_fermion, log_ratio_space, log_ratio_total, random
+        real(kind=8), dimension(2*Lq, Ltrot) :: sigma_curr
         integer :: nt
         
         log_ratio_fermion = 0.d0
+        sigma_curr = NsigL_K%sigma
         call this%flip(iseed, size_cluster, log_ratio_space)
         call Wrap_R(this%propU, this%wrU, 0)
         call Wrap_R(this%propD, this%wrD, 0)
@@ -306,7 +310,7 @@ contains
         ! 按照 CodeXun 的顺序：先 GlobalK_prop_R，再 propT_R，最后 Wrap_R
         ! 这样 Wrap_R 会在每个 Nwrap 间隔重建 Green 函数，消除累积误差
         do nt = 1, Ltrot
-            call GlobalK_prop_R(this%propU, this%propD, log_ratio_fermion, sigma_new, nt)
+            call GlobalK_prop_R(this%propU, this%propD, log_ratio_fermion, sigma_new, sigma_curr, nt)
             call propT_R(this%propU, this%propD, NsigL_K%lambda, nt)
             if (mod(nt, Nwrap) == 0) then
                 call Wrap_R(this%propU, this%wrU, nt)

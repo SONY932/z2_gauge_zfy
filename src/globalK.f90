@@ -603,7 +603,7 @@ contains
         group_idx = 1
     end function get_bond_group
 
-    subroutine GlobalK_prop_L(PropU, PropD, log_ratio_fermion, sigma_new, nt)
+    subroutine GlobalK_prop_L(PropU, PropD, log_ratio_fermion, sigma_new, sigma_current, nt)
         ! 向左传播时计算费米子行列式比并更新 Green 函数
         ! 使用正确的 Woodbury 公式
         ! 
@@ -613,13 +613,10 @@ contains
         class(Propagator), intent(inout) :: PropU, PropD
         real(kind=8), intent(inout) :: log_ratio_fermion
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma_new
+        real(kind=8), dimension(2*Lq, Ltrot), intent(inout) :: sigma_current
         integer, intent(in) :: nt
         integer :: ii, grp, idx
         real(kind=8) :: ratio
-        real(kind=8), dimension(2*Lq, Ltrot) :: sigma_current
-
-        ! 初始化当前 sigma 状态为原始 sigma
-        sigma_current = NsigL_K%sigma
 
         ! 按组顺序处理（从 group_4 到 group_1）
         ! 对于每个组内的 bonds，使用 Woodbury 公式
@@ -671,7 +668,7 @@ contains
         return
     end subroutine GlobalK_prop_L
 
-    subroutine GlobalK_prop_R(PropU, PropD, log_ratio_fermion, sigma_new, nt)
+    subroutine GlobalK_prop_R(PropU, PropD, log_ratio_fermion, sigma_new, sigma_current, nt)
         ! 向右传播时计算费米子行列式比并更新 Green 函数
         ! 使用正确的 Woodbury 公式
         ! 
@@ -680,13 +677,10 @@ contains
         class(Propagator), intent(inout) :: PropU, PropD
         real(kind=8), intent(inout) :: log_ratio_fermion
         real(kind=8), dimension(2*Lq, Ltrot), intent(in) :: sigma_new
+        real(kind=8), dimension(2*Lq, Ltrot), intent(inout) :: sigma_current
         integer, intent(in) :: nt
         integer :: ii, grp, idx
         real(kind=8) :: ratio
-        real(kind=8), dimension(2*Lq, Ltrot) :: sigma_current
-
-        ! 初始化当前 sigma 状态为原始 sigma
-        sigma_current = NsigL_K%sigma
 
         ! 先 wrap G（使用旧的 sigma）
         call Op_K%mmult_R(PropU%Gr, Latt, sigma_current, nt, 1)
