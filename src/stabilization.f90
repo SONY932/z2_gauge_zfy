@@ -521,6 +521,17 @@ contains
             enddo
         enddo
     end function has_nan_or_inf
+
+    real(kind=8) function max_abs(Mat) result(mv)
+        complex(kind=8), dimension(:,:), intent(in) :: Mat
+        integer :: nl, nr
+        mv = 0.d0
+        do nr = 1, size(Mat, 2)
+            do nl = 1, size(Mat, 1)
+                mv = max(mv, abs(Mat(nl, nr)))
+            enddo
+        enddo
+    end function max_abs
     
     real(kind=8) function compare_mat(Gr, Gr2) result(dif)
         complex(kind=8), dimension(Ndim, Ndim), intent(in) :: Gr, Gr2
@@ -605,6 +616,14 @@ contains
             endif
             dif = compare_mat(Gr, Prop%Gr)
             if (.not. ieee_is_finite(dif)) dif = 0.d0
+            if (dif > 1.d-3) then
+                call stab_green_big(Prop)
+                Gr = Gr_tmp%Gr00
+                dif = compare_mat(Gr, Prop%Gr)
+                if (.not. ieee_is_finite(dif)) dif = 0.d0
+                write(6,*) nt, dif, "left ortho retry with big in RANK", IRANK
+                Prop%Gr = Gr
+            endif
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
             if (dif .ge. 5.5d-5) write(6,*) nt, dif, "left ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
@@ -668,7 +687,7 @@ contains
             call stab_green(Gr, Prop, nt)
 
             if (has_nan_or_inf(Prop%Gr)) Prop%Gr = ZKRON
-            if (has_nan_or_inf(Gr)) then
+            if (has_nan_or_inf(Gr) .or. max_abs(Gr) > 1.d6) then
                 call stab_green_big(Prop)
                 Gr = Gr_tmp%Gr00
                 if (has_nan_or_inf(Gr)) Gr = ZKRON
@@ -676,6 +695,15 @@ contains
 
             dif = compare_mat(Gr, Prop%Gr)
             if (.not. ieee_is_finite(dif)) dif = 0.d0
+            if (dif > 1.d-3) then
+                ! 大偏差时，使用更稳健的 big 版本重建并覆盖
+                call stab_green_big(Prop)
+                Gr = Gr_tmp%Gr00
+                dif = compare_mat(Gr, Prop%Gr)
+                if (.not. ieee_is_finite(dif)) dif = 0.d0
+                write(6,*) nt, dif, "right ortho retry with big in RANK", IRANK
+                Prop%Gr = Gr
+            endif
             if (dif > Prop%Xmaxm) Prop%Xmaxm = dif
             if (dif .ge. 5.5d-5) write(6,*) nt, dif, "right ortho unstable in RANK ", IRANK
             if (present(flag)) Prop%Xmeanm = Prop%Xmeanm + dif
