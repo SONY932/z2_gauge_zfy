@@ -1,18 +1,18 @@
  ==============================================
  z2规范场模型
- 晶格 x 方向长度 Lx          :           4
- 晶格 y 方向长度 Ly          :           4
+ 晶格 x 方向长度 Lx          :           6
+ 晶格 y 方向长度 Ly          :           6
  跃迁系数 t                  :   1.5000000000000000     
  规范场耦合系数 J            :  0.29999999999999999     
  规范场横场强度 h            :  0.10000000000000001     
  化学势 mu                   :   0.0000000000000000     
  所选取的规范扇区 Q          :  -1.0000000000000000     
- 热化步数 Nwarm               :          50
+ 热化步数 Nwarm               :         500
  选择的初始化场构型方式 absolute :           1
- 逆温度 Beta                   :   2.0000000000000000     
- 虚时长度 Ltrot                :          40
+ 逆温度 Beta                   :   20.000000000000000     
+ 虚时长度 Ltrot                :         400
  => Dtau = Beta / Ltrot      :   5.0000000000000003E-002
- 稳定化频率 Nwrap              :           2
+ 稳定化频率 Nwrap              :           5
  # Bins                       :         100
  来回扫的更新次数 Nsweep        :           1
  # No. of MPI processes       :           1
@@ -22,19 +22,24 @@
    Strategy: Local updates only
    Warning: May be slow for strong time coupling!
  ==============================================
- Thermalize Accept Ratio                        :  0.29317187500000003     
- Progress           20 : Accept_Klocal_shift:    5.6562499999999995E-002
- Progress           20 : Accept_lambda_local:    0.0000000000000000     
- Progress           40 : Accept_Klocal_shift:    3.6748046875000023E-002
- Progress           40 : Accept_lambda_local:    0.0000000000000000     
- Progress           60 : Accept_Klocal_shift:    2.7662760416666689E-002
- Progress           60 : Accept_lambda_local:    0.0000000000000000     
- Progress           80 : Accept_Klocal_shift:    2.1455078125000009E-002
- Progress           80 : Accept_lambda_local:    0.0000000000000000     
- Progress          100 : Accept_Klocal_shift:    1.7164062500000007E-002
- Progress          100 : Accept_lambda_local:    0.0000000000000000     
- Accept_Klocal_shift                            :   1.7164062500000007E-002
- Accept_lambda_local                            :   0.0000000000000000     
- Max diff Matrix                                :   1.0574830941467717E-013
- Mean diff Matrix                               :                       NaN
- Tot CPU time                                   :   1.5938752020000000     
+  Therm step   100/  500 - accept ratio:   0.1833
+  Therm step   200/  500 - accept ratio:   0.1043
+  Therm step   300/  500 - accept ratio:   0.0734
+  Therm step   400/  500 - accept ratio:   0.0573
+  Therm step   500/  500 - accept ratio:   0.0473
+ Thermalize Accept Ratio                        :   4.7333680555555549E-002
+ Progress           20 : Accept_Klocal_shift:    6.0772569444444442E-003
+ Progress           20 : Accept_lambda_local:   0.22916666666666666     
+ Progress           40 : Accept_Klocal_shift:    5.9930555555555553E-003
+ Progress           40 : Accept_lambda_local:   0.32777777777777778     
+ Progress           60 : Accept_Klocal_shift:    6.1336805555555545E-003
+ Progress           60 : Accept_lambda_local:   0.31296296296296300     
+ Progress           80 : Accept_Klocal_shift:    5.9926215277777773E-003
+ Progress           80 : Accept_lambda_local:   0.32361111111111118     
+ Progress          100 : Accept_Klocal_shift:    5.9963541666666663E-003
+ Progress          100 : Accept_lambda_local:   0.34555555555555550     
+ Accept_Klocal_shift                            :   5.9963541666666663E-003
+ Accept_lambda_local                            :  0.34555555555555550     
+ Max diff Matrix                                :   2580081.7975943685     
+ Mean diff Matrix                               :   374.36268420187849     
+ Tot CPU time                                   :   105.91676305100000     

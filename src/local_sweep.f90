@@ -91,15 +91,29 @@ contains
         integer :: nt
         call this%reset(.false.)
         
-        ! 初始化 ULlist 为有效值（单位矩阵和 D=1）
+        ! 重置 log-scale 变量（每次重新构建稳定化链时）
+        PropU%LOGDUR = 0.d0; PropU%LOGDUL = 0.d0
+        PropU%SIGN_DUR = 1.d0; PropU%SIGN_DUL = 1.d0
+        PropD%LOGDUR = 0.d0; PropD%LOGDUL = 0.d0
+        PropD%SIGN_DUR = 1.d0; PropD%SIGN_DUL = 1.d0
+        
+        ! 重置 DUR/DUL 为 1（因为尺度现在存在 LOGDUR/LOGDUL 中）
+        PropU%DUR = dcmplx(1.d0, 0.d0); PropU%DUL = dcmplx(1.d0, 0.d0)
+        PropD%DUR = dcmplx(1.d0, 0.d0); PropD%DUL = dcmplx(1.d0, 0.d0)
+        
+        ! 初始化 ULlist 和 URlist 为有效值（单位矩阵和 D=1）
         ! 这确保在第一次 sweep_R 之前 ULlist 已经有有效数据
         do nt = 0, Ltrot/Nwrap
             WrU%ULlist(:,:,nt) = ZKRON
             WrU%VLlist(:,:,nt) = ZKRON
             WrU%DLlist(:,nt) = dcmplx(1.d0, 0.d0)
+            WrU%LOGDLlist(nt) = 0.d0
+            WrU%LOGDRlist(nt) = 0.d0
             WrD%ULlist(:,:,nt) = ZKRON
             WrD%VLlist(:,:,nt) = ZKRON
             WrD%DLlist(:,nt) = dcmplx(1.d0, 0.d0)
+            WrD%LOGDLlist(nt) = 0.d0
+            WrD%LOGDRlist(nt) = 0.d0
         enddo
         
         call Wrap_pre(PropU, WrU, 0)

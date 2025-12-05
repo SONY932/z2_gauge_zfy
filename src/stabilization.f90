@@ -78,6 +78,7 @@ contains
         class(Propagator), intent(inout) :: Prop
         integer :: info, i, j, Lwork
         complex(kind=8), dimension(:), allocatable :: WORK
+        real(kind=8) :: max_dur, scale_factor
 ! QR(TMP * U * D) * V
 ! U*D
         matUDV = Prop%UUR
@@ -88,6 +89,21 @@ contains
         IPVT = 0
 ! output in matUDV and DUR
         call QDRP_decompose(matUDV, Prop%DUR, IPVT, TAU, WORK, Lwork)
+
+! ===== 只在最大值接近溢出时才 rescale =====
+! 阈值设为 1e150，给 DUR*DUL 留 1e156 的余量
+        max_dur = 0.d0
+        do i = 1, Ndim
+            if (abs(Prop%DUR(i)) > max_dur) max_dur = abs(Prop%DUR(i))
+        enddo
+        
+        if (max_dur > 1.d150) then
+            scale_factor = max_dur / 1.d100  ! 缩放到约 1e100
+            Prop%LOGDUR = Prop%LOGDUR + log(scale_factor)
+            Prop%DUR = Prop%DUR / scale_factor
+        endif
+! ================================================================
+
 ! Permute V. Since we multiply with V from the right we have to permute the rows of V.
 ! A V = A P P^-1 V = Q R P^-1 V; ZLAPMR: rearrange rows of matrix V
         call ZLAPMR(.true., Ndim, Ndim, Prop%VUR, Ndim, IPVT) ! lapack 3.3
@@ -104,6 +120,7 @@ contains
         class(Propagator), intent(inout) :: Prop
         integer :: info, i, j, Lwork
         complex(kind=8), dimension(:), allocatable :: WORK
+        real(kind=8) :: max_dul, scale_factor
 ! QR(TMP^\dagger * U^dagger * D) * V^dagger
 ! U*D
         matUDV = dconjg(transpose(Prop%UUL))
@@ -114,6 +131,20 @@ contains
         IPVT = 0 
 ! output in matUDV and DUL
         call QDRP_decompose(matUDV, Prop%DUL, IPVT, TAU, WORK, Lwork)
+
+! ===== 只在最大值接近溢出时才 rescale =====
+        max_dul = 0.d0
+        do i = 1, Ndim
+            if (abs(Prop%DUL(i)) > max_dul) max_dul = abs(Prop%DUL(i))
+        enddo
+        
+        if (max_dul > 1.d150) then
+            scale_factor = max_dul / 1.d100
+            Prop%LOGDUL = Prop%LOGDUL + log(scale_factor)
+            Prop%DUL = Prop%DUL / scale_factor
+        endif
+! ================================================================
+
 ! Permute V. Since we multiply with V^dagger from the right we have to permute the columns of V.
 ! A V^dagger = A P P^-1 V^dagger = Q R P^-1 V^dagger; ZLAPMT: rearrange columns of matrix V
         call ZLAPMT(.true., Ndim, Ndim, Prop%VUL, Ndim, IPVT)
@@ -139,6 +170,7 @@ contains
         complex(kind=8), dimension(:), allocatable :: WORK
         complex(kind=kind(0.d0)) :: Z
         integer :: nl, nr, Lwork, info
+        real(kind=8) :: log_scale, scale_factor
         
 ! coefficient of zgemm: alpha * op(A) * op(B) + beta * op(C); here alpha=Z_one=1, beta=0
 ! VRVL = VR*VL
@@ -148,6 +180,10 @@ contains
         
         
 ! compute: matUDV = (UL*UR)^-1 + DR VR VL DL
+! 由于 DR 和 DL 可能被 rescale 了，需要考虑 scale 因子
+! 总 scale = exp(LOGDUR + LOGDUL)
+        log_scale = Prop%LOGDUR + Prop%LOGDUL
+
         temp = dcmplx(0.d0, 0.d0)
         do nr = 1, Ndim ! temp(1:Ndim, nr) = VRVL(1:Ndim, nr) * DUL(nr)
             call zaxpy(Ndim, Prop%DUL(nr), VRVL(1, nr), 1, temp(1, nr), 1)
@@ -156,7 +192,21 @@ contains
         do nl = 1, Ndim ! VRVL(nl, 1:Ndim) = DUR(nl) * temp(nl, 1:Ndim)
             call zaxpy(Ndim, Prop%DUR(nl), temp(nl, 1), Ndim, VRVL(nl, 1), Ndim)
         enddo
-        matUDV = invULUR + VRVL
+        
+! 现在 VRVL 是 DR_scaled * VR * VL * DL_scaled
+! 实际的 VRVL_original = VRVL * exp(log_scale)
+! 只有当 log_scale > 0 时才需要恢复 scale
+        if (log_scale > 0.d0 .and. log_scale < 300.d0) then
+            scale_factor = exp(log_scale)
+            matUDV = invULUR + VRVL * scale_factor
+        else if (log_scale >= 300.d0) then
+            ! scale 太大，近似处理：G ≈ 0
+            ! 直接用 VRVL 作为主项，invULUR 可忽略
+            matUDV = VRVL
+        else
+            ! 没有 rescale，直接使用
+            matUDV = invULUR + VRVL
+        endif
 ! if ntau >Ltrot/2, decompose matUDV^dagger
         if (nt > Ltrot/2) matUDV = dconjg(transpose(matUDV))
 ! matUDV * P  = U D V
@@ -536,6 +586,7 @@ contains
         WrList%URlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUR(1:Ndim, 1:Ndim)
         WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR(1:Ndim, 1:Ndim)
         WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
+        WrList%LOGDRlist(nt_st) = Prop%LOGDUR
         if (nt == Ltrot) then
             ! 计算 G_0 = (1 + B_tot)^{-1}
             ! 注意：Prop%Gr 存储 G_0，不转换为 G_λ
@@ -566,6 +617,7 @@ contains
         Prop%UUR(1:Ndim, 1:Ndim) = WrList%URlist(1:Ndim, 1:Ndim, nt_st)
         Prop%VUR(1:Ndim, 1:Ndim) = WrList%VRlist(1:Ndim, 1:Ndim, nt_st)
         Prop%DUR(1:Ndim) = WrList%DRlist(1:Ndim, nt_st)
+        Prop%LOGDUR = WrList%LOGDRlist(nt_st)  ! 恢复 LOGDUR
         if (nt == 0) then ! reset URlist to identity/D=1 for next sweep_R
             ! 重新初始化为单位矩阵和 D=1，而不是清空为 0
             ! 这确保在 sweep_L 结束后，如果有 global update 访问 URlist，
@@ -574,6 +626,7 @@ contains
                 WrList%URlist(:,:,ii) = ZKRON
                 WrList%VRlist(:,:,ii) = ZKRON
                 WrList%DRlist(:,ii) = dcmplx(1.d0, 0.d0)
+                WrList%LOGDRlist(ii) = 0.d0
             enddo
         endif
         if (nt .ne. Ltrot) then
@@ -590,6 +643,7 @@ contains
         WrList%ULlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUL(1:Ndim, 1:Ndim)
         WrList%VLlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUL(1:Ndim, 1:Ndim)
         WrList%DLlist(1:Ndim, nt_st) = Prop%DUL(1:Ndim)
+        WrList%LOGDLlist(nt_st) = Prop%LOGDUL  ! 存储 LOGDUL
         return
     end subroutine Wrap_L
 
@@ -607,6 +661,7 @@ contains
         WrList%ULlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUL(1:Ndim, 1:Ndim)
         WrList%VLlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUL(1:Ndim, 1:Ndim)
         WrList%DLlist(1:Ndim, nt_st) = Prop%DUL(1:Ndim)
+        WrList%LOGDLlist(nt_st) = Prop%LOGDUL  ! 存储 LOGDUL
         return
     end subroutine Wrap_L_store
     
@@ -628,6 +683,7 @@ contains
         Prop%UUL(1:Ndim, 1:Ndim) = WrList%ULlist(1:Ndim, 1:Ndim, nt_st)
         Prop%VUL(1:Ndim, 1:Ndim) = WrList%VLlist(1:Ndim, 1:Ndim, nt_st)
         Prop%DUL(1:Ndim) = WrList%DLlist(1:Ndim, nt_st)
+        Prop%LOGDUL = WrList%LOGDLlist(nt_st)  ! 恢复 LOGDUL
         if (nt == Ltrot) then
             ! 清空 ULlist，但重新初始化为单位矩阵和 D=1
             ! 这确保在下一次 sweep_L 之前，如果有 global update 访问 ULlist，
@@ -636,6 +692,7 @@ contains
                 WrList%ULlist(:,:,ii) = ZKRON
                 WrList%VLlist(:,:,ii) = ZKRON
                 WrList%DLlist(:,ii) = dcmplx(1.d0, 0.d0)
+                WrList%LOGDLlist(ii) = 0.d0
             enddo
         endif
         if (nt .ne. 0) then
@@ -654,6 +711,7 @@ contains
         WrList%URlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUR(1:Ndim, 1:Ndim)
         WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR(1:Ndim, 1:Ndim)
         WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
+        WrList%LOGDRlist(nt_st) = Prop%LOGDUR  ! 存储 LOGDUR
         return
     end subroutine Wrap_R
 
@@ -671,6 +729,7 @@ contains
         WrList%URlist(1:Ndim, 1:Ndim, nt_st) = Prop%UUR(1:Ndim, 1:Ndim)
         WrList%VRlist(1:Ndim, 1:Ndim, nt_st) = Prop%VUR(1:Ndim, 1:Ndim)
         WrList%DRlist(1:Ndim, nt_st) = Prop%DUR(1:Ndim)
+        WrList%LOGDRlist(nt_st) = Prop%LOGDUR  ! 存储 LOGDUR
         return
     end subroutine Wrap_R_store
 
