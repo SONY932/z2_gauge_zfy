@@ -29,12 +29,3 @@
  Progress           40 : Accept_lambda_local:    0.0000000000000000     
  Progress           60 : Accept_Klocal_shift:    2.7662760416666689E-002
  Progress           60 : Accept_lambda_local:    0.0000000000000000     
- Progress           80 : Accept_Klocal_shift:    2.1455078125000009E-002
- Progress           80 : Accept_lambda_local:    0.0000000000000000     
- Progress          100 : Accept_Klocal_shift:    1.7164062500000007E-002
- Progress          100 : Accept_lambda_local:    0.0000000000000000     
- Accept_Klocal_shift                            :   1.7164062500000007E-002
- Accept_lambda_local                            :   0.0000000000000000     
- Max diff Matrix                                :   1.0574830941467717E-013
- Mean diff Matrix                               :                       NaN
- Tot CPU time                                   :   1.5938752020000000     
