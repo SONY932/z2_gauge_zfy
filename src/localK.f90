@@ -675,7 +675,7 @@ contains
         return
     end subroutine LocalK_metro_woodbury
 
-    subroutine compute_LR_cols_rows(group_idx, P, ntau, L_cols, R_rows)
+    subroutine compute_LR_cols_rows(group_idx, P, ntau, L_cols, R_rows, sigma_in)
         ! 计算 L_cols = L(:, [P1, P2]) 和 R_rows = R([P1, P2], :)
         ! 
         ! 棋盘分解：B(τ) = B_4 * B_3 * B_2 * B_1
@@ -703,6 +703,7 @@ contains
         !
         integer, intent(in) :: group_idx, P(2), ntau
         complex(kind=8), intent(out) :: L_cols(Ndim, 2), R_rows(2, Ndim)
+        real(kind=8), dimension(2*Lq, Ltrot), intent(in), optional :: sigma_in
         
         integer :: kk
         
@@ -719,23 +720,24 @@ contains
         ! 从 I 开始，依次左乘 B_{k+1}, B_{k+2}, ..., B_4
         ! 注意：对于 group_4，L = I；对于 group_1，L = B_4 * B_3 * B_2
         do kk = group_idx + 1, 4
-            call apply_group_to_cols_direct(kk, ntau, L_cols)
+            call apply_group_to_cols_direct(kk, ntau, L_cols, sigma_in)
         enddo
         
         ! 计算 R = B_{k-1} * ... * B_1（不包含 B_k！）
         ! 从 I 开始，依次右乘 B_{k-1}, B_{k-2}, ..., B_1
         ! 注意：对于 group_1，R = I；对于 group_4，R = B_3 * B_2 * B_1
         do kk = group_idx - 1, 1, -1
-            call apply_group_to_rows_direct(kk, ntau, R_rows)
+            call apply_group_to_rows_direct(kk, ntau, R_rows, sigma_in)
         enddo
         
         return
     end subroutine compute_LR_cols_rows
 
-    subroutine apply_group_to_cols_direct(grp_idx, nt, cols)
+    subroutine apply_group_to_cols_direct(grp_idx, nt, cols, sigma_in)
         ! 将 B_grp 左乘到 cols 上：cols = B_grp * cols
         integer, intent(in) :: grp_idx, nt
         complex(kind=8), intent(inout) :: cols(Ndim, 2)
+        real(kind=8), dimension(2*Lq, Ltrot), intent(in), optional :: sigma_in
         integer :: idx, bond_no, s1, s2, jj, glen
         real(kind=8) :: sig, Cv, Sv
         complex(kind=8) :: t1, t2
@@ -747,7 +749,11 @@ contains
                 bond_no = Latt%group_1(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK cols grp1")
                 do jj = 1, 2
                     t1 = Cv * cols(s1, jj) + Sv * cols(s2, jj)
@@ -762,7 +768,11 @@ contains
                 bond_no = Latt%group_2(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK cols grp2")
                 do jj = 1, 2
                     t1 = Cv * cols(s1, jj) + Sv * cols(s2, jj)
@@ -777,7 +787,11 @@ contains
                 bond_no = Latt%group_3(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK cols grp3")
                 do jj = 1, 2
                     t1 = Cv * cols(s1, jj) + Sv * cols(s2, jj)
@@ -792,7 +806,11 @@ contains
                 bond_no = Latt%group_4(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK cols grp4")
                 do jj = 1, 2
                     t1 = Cv * cols(s1, jj) + Sv * cols(s2, jj)
@@ -804,10 +822,11 @@ contains
         end select
     end subroutine apply_group_to_cols_direct
     
-    subroutine apply_group_to_rows_direct(grp_idx, nt, rows)
+    subroutine apply_group_to_rows_direct(grp_idx, nt, rows, sigma_in)
         ! 将 B_grp 右乘到 rows 上：rows = rows * B_grp
         integer, intent(in) :: grp_idx, nt
         complex(kind=8), intent(inout) :: rows(2, Ndim)
+        real(kind=8), dimension(2*Lq, Ltrot), intent(in), optional :: sigma_in
         integer :: idx, bond_no, s1, s2, jj, glen
         real(kind=8) :: sig, Cv, Sv
         complex(kind=8) :: t1, t2
@@ -819,7 +838,11 @@ contains
                 bond_no = Latt%group_1(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK rows grp1")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
@@ -834,7 +857,11 @@ contains
                 bond_no = Latt%group_2(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK rows grp2")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
@@ -849,7 +876,11 @@ contains
                 bond_no = Latt%group_3(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK rows grp3")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
@@ -864,7 +895,11 @@ contains
                 bond_no = Latt%group_4(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 call safe_cosh_sinh(Op_K%alpha * sig, Cv, Sv, "LocalK rows grp4")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
@@ -876,11 +911,12 @@ contains
         end select
     end subroutine apply_group_to_rows_direct
     
-    subroutine apply_group_inv_to_rows(grp_idx, nt, rows)
+    subroutine apply_group_inv_to_rows(grp_idx, nt, rows, sigma_in)
         ! 将 B_grp^{-1} 右乘到 rows 上：rows = rows * B_grp^{-1}
         ! B_grp^{-1} = exp(-α σ_b) 对于每个 bond
         integer, intent(in) :: grp_idx, nt
         complex(kind=8), intent(inout) :: rows(2, Ndim)
+        real(kind=8), dimension(2*Lq, Ltrot), intent(in), optional :: sigma_in
         integer :: idx, bond_no, s1, s2, jj, glen
         real(kind=8) :: sig, Cv, Sv
         complex(kind=8) :: t1, t2
@@ -892,7 +928,11 @@ contains
                 bond_no = Latt%group_1(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 ! 使用 -α σ 来得到逆矩阵
                 call safe_cosh_sinh(-Op_K%alpha * sig, Cv, Sv, "LocalK rows_inv grp1")
                 do jj = 1, 2
@@ -908,7 +948,11 @@ contains
                 bond_no = Latt%group_2(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 call safe_cosh_sinh(-Op_K%alpha * sig, Cv, Sv, "LocalK rows_inv grp2")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
@@ -923,7 +967,11 @@ contains
                 bond_no = Latt%group_3(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 call safe_cosh_sinh(-Op_K%alpha * sig, Cv, Sv, "LocalK rows_inv grp3")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
@@ -938,7 +986,11 @@ contains
                 bond_no = Latt%group_4(idx)
                 s1 = Latt%bond_list(bond_no, 1)
                 s2 = Latt%bond_list(bond_no, 2)
-                sig = NsigL_K%sigma(bond_no, nt)
+                if (present(sigma_in)) then
+                    sig = sigma_in(bond_no, nt)
+                else
+                    sig = NsigL_K%sigma(bond_no, nt)
+                endif
                 call safe_cosh_sinh(-Op_K%alpha * sig, Cv, Sv, "LocalK rows_inv grp4")
                 do jj = 1, 2
                     t1 = rows(jj, s1) * Cv + rows(jj, s2) * Sv
