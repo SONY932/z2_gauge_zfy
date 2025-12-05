@@ -325,6 +325,8 @@ contains
             if (mod(nt, Nwrap) == 0) then
                 call Wrap_R(this%propU, this%wrU, nt)
                 call Wrap_R(this%propD, this%wrD, nt)
+                call Wrap_R_store(this%propU, this%wrU, nt)
+                call Wrap_R_store(this%propD, this%wrD, nt)
             endif
         enddo
         log_ratio_total = log_ratio_fermion + log_ratio_space
